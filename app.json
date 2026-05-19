@@ -1,0 +1,70 @@
+{
+  "expo": {
+    "name": "GeoSnap",
+    "slug": "geosnap",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/adaptive-icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "backgroundColor": "#0A0A0F"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.geosnap.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "GeoSnap needs camera access to take GPS-tagged photos.",
+        "NSLocationWhenInUseUsageDescription": "GeoSnap needs your location to tag photos with GPS coordinates.",
+        "NSPhotoLibraryAddUsageDescription": "GeoSnap saves your GPS-tagged photos to your photo library.",
+        "NSPhotoLibraryUsageDescription": "GeoSnap accesses your photo library to display your GPS-tagged photos."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0A0A0F"
+      },
+      "package": "com.geosnap.app",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
+        "android.permission.ACCESS_MEDIA_LOCATION",
+        "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.READ_MEDIA_AUDIO"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "GeoSnap needs camera access to take GPS-tagged photos."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "GeoSnap needs location to tag photos with GPS coordinates."
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "GeoSnap saves your GPS-tagged photos to your photo library.",
+          "savePhotosPermission": "GeoSnap saves GPS-tagged photos to your GeoSnap album.",
+          "isAccessMediaLocationEnabled": true
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "c8db18b2-251f-4bab-8f96-442c53e43f9f"
+      }
+    }
+  }
+}
