@@ -9,15 +9,20 @@ export default function GpsOverlay({ location, address, forCapture = false, capt
   const { theme: T } = useTheme();
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(16)).current;
-  // Use captureTime (frozen) when stamping, otherwise live clock
-  const [now, setNow] = useState(captureTime || new Date());
+  // Live clock — always synced to system time; frozen only on capture
+  const [now, setNow] = useState(() => new Date());
 
-  // Live clock — only runs in live viewfinder, not when stamping a capture
   useEffect(() => {
-    if (forCapture) return; // frozen when stamping
+    if (forCapture) {
+      // When stamping the capture, freeze at captureTime
+      if (captureTime) setNow(captureTime);
+      return;
+    }
+    // Live clock synced to system time
+    setNow(new Date());
     const timer = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(timer);
-  }, [forCapture]);
+  }, [forCapture, captureTime]);
 
   useEffect(() => {
     if (location) {
@@ -68,14 +73,11 @@ export default function GpsOverlay({ location, address, forCapture = false, capt
     switch (style) {
       case 'satellite':
       case 'hybrid':
-        // ESRI World Imagery — free satellite, no API key, no UA restrictions
         return `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`;
       case 'terrain':
-        // ESRI World Topo Map — free terrain, no API key
         return `https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/${z}/${y}/${x}`;
       case 'roadmap':
       default:
-        // ESRI World Street Map — free roadmap, no API key, works in React Native
         return `https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/${z}/${y}/${x}`;
     }
   };
@@ -92,11 +94,13 @@ export default function GpsOverlay({ location, address, forCapture = false, capt
       style={[styles.container, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}
       pointerEvents={forCapture ? 'none' : 'box-none'}
     >
-      {/* Top-left: Date/Time Badge */}
-      <View style={styles.timeBadge}>
-        <Text style={[styles.timeText, { color: T.accent }]}>{timeStr}</Text>
-        <Text style={styles.dateText}>{dayStr}, {dateStr}</Text>
-      </View>
+      {/* Top-left: Date/Time Badge — only on live viewfinder, NOT burned into saved image */}
+      {!forCapture && (
+        <View style={styles.timeBadge}>
+          <Text style={[styles.timeText, { color: T.accent }]}>{timeStr}</Text>
+          <Text style={styles.dateText}>{dayStr}, {dateStr}</Text>
+        </View>
+      )}
 
       {/* Bottom: GPS Info Panel (matching reference image style) */}
       <View style={styles.gpsPanel}>
@@ -188,11 +192,13 @@ export default function GpsOverlay({ location, address, forCapture = false, capt
 const styles = StyleSheet.create({
   container: {
     ...StyleSheet.absoluteFillObject,
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
     padding: 10,
   },
   timeBadge: {
-    alignSelf: 'flex-start',
+    position: 'absolute',
+    top: 10,
+    left: 10,
     backgroundColor: 'rgba(0,0,0,0.60)',
     borderRadius: 7,
     paddingHorizontal: 9,

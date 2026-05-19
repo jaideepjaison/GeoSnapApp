@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Alert,
-  ActivityIndicator, Dimensions, Animated, Platform,
-  Image, Share, Linking, PanResponder, AppState,
+  ActivityIndicator, Animated, Platform,
+  Image, Share, Linking,
   Modal, TextInput, KeyboardAvoidingView, ScrollView as ScrollViewRN,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
@@ -15,8 +15,6 @@ import { captureRef } from 'react-native-view-shot';
 import GpsOverlay from '../components/GpsOverlay';
 import FlashEffect from '../components/FlashEffect';
 import { useTheme } from '../context/ThemeContext';
-
-const { width } = Dimensions.get('window');
 
 // R4: Track if media permission was already granted this install
 let _mediaPermGranted = false;
@@ -281,17 +279,7 @@ export default function CameraScreen() {
     setShowLocModal(false);
   };
 
-  const applyManualLocation = () => {
-    const lat = parseFloat(editLat);
-    const lon = parseFloat(editLon);
-    if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
-      Alert.alert('Invalid Coordinates', 'Please enter valid latitude (-90 to 90) and longitude (-180 to 180).');
-      return;
-    }
-    setManualLocation({ coords: { latitude: lat, longitude: lon } });
-    setManualAddress(editAddr.trim() || null);
-    setShowLocModal(false);
-  };
+
 
   const openMaps = () => {
     if (!location) return;
@@ -327,14 +315,26 @@ export default function CameraScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: T.bg }]}>
-      {/* Header */}
+      {/* Header — compact premium bar */}
       <SafeAreaView edges={['top']} style={{ backgroundColor: T.surface }}>
         <View style={[styles.headerContent, { borderBottomColor: T.border }]}>
           <View style={styles.logoRow}>
-            <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
-              <View style={[styles.gpsDot, { backgroundColor: location ? T.accentGreen : T.textMuted }]} />
-            </Animated.View>
-            <Text style={[styles.appName, { color: T.text }]}>GEOSNAP</Text>
+            <Image
+              source={require('../../assets/geo_snap_logo.png')}
+              style={styles.headerLogo}
+              resizeMode="contain"
+            />
+            <View>
+              <Text style={[styles.appName, { color: T.text }]}>GEOSNAP</Text>
+              <View style={styles.gpsLiveRow}>
+                <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
+                  <View style={[styles.gpsDot, { backgroundColor: location ? T.accentGreen : T.textMuted }]} />
+                </Animated.View>
+                <Text style={[styles.gpsLiveText, { color: location ? T.accentGreen : T.textMuted }]}>
+                  {location ? 'GPS ACTIVE' : 'ACQUIRING'}
+                </Text>
+              </View>
+            </View>
           </View>
           <View style={styles.headerRight}>
             {/* R7: Brightness toggle */}
@@ -395,6 +395,24 @@ export default function CameraScreen() {
           captureTime={captureTime}
         />
 
+        {/* R3: Zoom buttons — floating in camera area */}
+        {!isPreview && (
+          <View style={styles.zoomFloat}>
+            {ZOOM_LABELS.map((lbl, i) => (
+              <TouchableOpacity
+                key={i}
+                style={[
+                  styles.zoomFloatBtn,
+                  i === currentZoomIdx && { backgroundColor: T.accent, borderColor: T.accent },
+                ]}
+                onPress={() => { setZoom(ZOOM_LEVELS[i]); setShowZoomBar(true); setTimeout(() => setShowZoomBar(false), 1500); }}
+              >
+                <Text style={[styles.zoomFloatText, i === currentZoomIdx && { color: T.mode === 'dark' ? '#000' : '#FFF' }]}>{lbl}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+
         {showFlash && <FlashEffect />}
 
         {/* R3: Zoom indicator overlay */}
@@ -426,7 +444,7 @@ export default function CameraScreen() {
         )}
       </View>
 
-      {/* Controls */}
+      {/* Controls — compact: just flash/shutter/flip */}
       <SafeAreaView edges={['bottom']} style={[styles.controls, { backgroundColor: T.surface, borderTopColor: T.border }]}>
         {isPreview ? (
           // Preview actions: Retake | Save | Share
@@ -491,36 +509,6 @@ export default function CameraScreen() {
             {/* Flip */}
             <TouchableOpacity style={[styles.controlBtn, { backgroundColor: T.controlBg, borderColor: T.border }]} onPress={toggleFacing}>
               <Ionicons name="camera-reverse-outline" size={24} color={T.textSub} />
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {/* Bottom row: GPS status + R3 zoom buttons */}
-        {!isPreview && (
-          <View style={styles.bottomRow}>
-            {/* R3: Zoom buttons */}
-            <View style={styles.zoomRow}>
-              {ZOOM_LABELS.map((lbl, i) => (
-                <TouchableOpacity
-                  key={i}
-                  style={[
-                    styles.zoomBtn,
-                    { backgroundColor: T.controlBg, borderColor: T.border },
-                    i === currentZoomIdx && { backgroundColor: T.accent, borderColor: T.accent }
-                  ]}
-                  onPress={() => { setZoom(ZOOM_LEVELS[i]); setShowZoomBar(true); setTimeout(() => setShowZoomBar(false), 1500); }}
-                >
-                  <Text style={[styles.zoomBtnText, { color: T.textSub }, i === currentZoomIdx && { color: T.mode === 'dark' ? '#000' : '#FFF' }]}>{lbl}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            {/* GPS coords */}
-            <TouchableOpacity style={styles.gpsStatus} onPress={openMaps} activeOpacity={location ? 0.7 : 1}>
-              <Ionicons name={location ? 'location' : 'location-outline'} size={12} color={location ? T.accentGreen : T.textMuted} />
-              <Text style={[styles.gpsStatusText, { color: location ? T.accentGreen : T.textMuted, fontFamily: Platform.OS === 'ios' ? 'Courier New' : 'monospace' }]} numberOfLines={1}>
-                {location ? `${location.coords.latitude.toFixed(5)}, ${location.coords.longitude.toFixed(5)}` : 'Acquiring GPS...'}
-              </Text>
             </TouchableOpacity>
           </View>
         )}
@@ -709,12 +697,15 @@ export default function CameraScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 12 },
-  headerContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: 1 },
-  logoRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  gpsDot: { width: 8, height: 8, borderRadius: 4 },
-  appName: { fontSize: 18, fontWeight: '800', letterSpacing: 3 },
-  headerRight: { flexDirection: 'row', gap: 8 },
-  headerBtn: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
+  headerContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14, paddingVertical: 8, borderBottomWidth: 1 },
+  logoRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  headerLogo: { width: 32, height: 32, borderRadius: 8 },
+  gpsDot: { width: 6, height: 6, borderRadius: 3 },
+  gpsLiveRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 1 },
+  gpsLiveText: { fontSize: 8, fontWeight: '700', letterSpacing: 1.5 },
+  appName: { fontSize: 16, fontWeight: '800', letterSpacing: 2.5 },
+  headerRight: { flexDirection: 'row', gap: 6 },
+  headerBtn: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
   cameraContainer: { flex: 1, position: 'relative', overflow: 'hidden', backgroundColor: '#000' },
   camera: { flex: 1 },
   grid: { ...StyleSheet.absoluteFillObject },
@@ -729,29 +720,27 @@ const styles = StyleSheet.create({
   zoomIndicator: { position: 'absolute', top: 12, alignSelf: 'center', flexDirection: 'row', gap: 6, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4 },
   zoomPip: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.15)' },
   zoomPipText: { fontSize: 11, fontWeight: '700' },
-  brightnessBar: { position: 'absolute', bottom: 8, left: 10, right: 10, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6 },
+  brightnessBar: { position: 'absolute', bottom: 52, left: 10, right: 10, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6 },
   brightBtn: { padding: 2 },
   brightTrack: { flex: 1, height: 4, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 2, overflow: 'hidden' },
   brightFill: { height: '100%', backgroundColor: '#FFD700', borderRadius: 2 },
   brightLabel: { color: '#FFD700', fontSize: 10, fontWeight: '700', minWidth: 30, textAlign: 'right', fontFamily: Platform.OS === 'ios' ? 'Courier New' : 'monospace' },
+  // Floating zoom inside camera
+  zoomFloat: { position: 'absolute', bottom: 105, alignSelf: 'center', flexDirection: 'row', gap: 6, backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 22, paddingHorizontal: 6, paddingVertical: 4 },
+  zoomFloatBtn: { paddingHorizontal: 14, paddingVertical: 5, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.12)' },
+  zoomFloatText: { fontSize: 12, fontWeight: '700', color: '#FFF' },
   controls: { borderTopWidth: 1 },
-  shootControls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', paddingHorizontal: 32, paddingVertical: 14 },
-  controlBtn: { width: 50, height: 50, borderRadius: 25, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
-  shutterBtn: { width: 74, height: 74, borderRadius: 37, borderWidth: 3, alignItems: 'center', justifyContent: 'center' },
-  shutterInner: { width: 58, height: 58, borderRadius: 29 },
-  previewControls: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, gap: 10 },
-  previewBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 12, borderRadius: 12, borderWidth: 1 },
-  shareBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 12, borderRadius: 12, borderWidth: 1 },
+  shootControls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', paddingHorizontal: 32, paddingVertical: 10 },
+  controlBtn: { width: 46, height: 46, borderRadius: 23, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
+  shutterBtn: { width: 68, height: 68, borderRadius: 34, borderWidth: 3, alignItems: 'center', justifyContent: 'center' },
+  shutterInner: { width: 54, height: 54, borderRadius: 27 },
+  previewControls: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10, gap: 10 },
+  previewBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12, borderWidth: 1 },
+  shareBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12, borderWidth: 1 },
   previewBtnText: { fontSize: 14, fontWeight: '600' },
-  saveBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 12, borderRadius: 12 },
+  saveBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 10, borderRadius: 12 },
   saveBtnDisabled: { opacity: 0.5 },
   saveBtnText: { fontSize: 14, fontWeight: '700' },
-  bottomRow: { paddingHorizontal: 16, paddingBottom: 4, gap: 6 },
-  zoomRow: { flexDirection: 'row', justifyContent: 'center', gap: 8 },
-  zoomBtn: { paddingHorizontal: 14, paddingVertical: 5, borderRadius: 14, borderWidth: 1 },
-  zoomBtnText: { fontSize: 12, fontWeight: '700' },
-  gpsStatus: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5 },
-  gpsStatusText: { fontSize: 10, letterSpacing: 0.3 },
   permText: { fontSize: 20, fontWeight: '700', textAlign: 'center' },
   permSubText: { fontSize: 14, textAlign: 'center', lineHeight: 22 },
   permBtn: { paddingHorizontal: 32, paddingVertical: 14, borderRadius: 14 },
@@ -759,15 +748,35 @@ const styles = StyleSheet.create({
   // Edit location button
   editLocBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, marginHorizontal: 16, marginBottom: 8, paddingHorizontal: 14, paddingVertical: 9, borderRadius: 10, borderWidth: 1 },
   editLocText: { flex: 1, fontSize: 12, fontWeight: '500' },
-  // Manual location modal
+  // Location modal
   modalOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' },
-  modalSheet: { borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, gap: 4 },
-  modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
-  modalTitle: { fontSize: 17, fontWeight: '700' },
-  modalHint: { fontSize: 12, lineHeight: 18, marginBottom: 10 },
+  modalSheet: { borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, gap: 6, maxHeight: '85%' },
+  modalHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 8 },
+  modalTitle: { fontSize: 18, fontWeight: '800' },
+  modalSubtitle: { fontSize: 12, marginTop: 2 },
+  modalCloseBtn: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+  // Search bar
+  searchBar: { flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 8, marginBottom: 4 },
+  searchInput: { flex: 1, fontSize: 15, paddingVertical: 2 },
+  // Results list
+  resultsList: { maxHeight: 240 },
+  resultItem: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth },
+  resultIcon: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+  resultPrimary: { fontSize: 14, fontWeight: '600' },
+  resultSecondary: { fontSize: 11, marginTop: 1 },
+  resultCoords: { fontSize: 10, fontFamily: Platform.OS === 'ios' ? 'Courier New' : 'monospace', marginTop: 2 },
+  // No results
+  noResults: { alignItems: 'center', paddingVertical: 16, gap: 4 },
+  noResultsText: { fontSize: 14, fontWeight: '600' },
+  noResultsHint: { fontSize: 12, textAlign: 'center', lineHeight: 18 },
+  // Manual toggle
+  manualToggle: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 10 },
+  manualToggleText: { fontSize: 12, fontWeight: '500' },
+  manualCoords: { gap: 4 },
+  // Shared modal elements
   inputLabel: { fontSize: 11, fontWeight: '600', marginTop: 6, marginBottom: 3, letterSpacing: 0.5 },
   locInput: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, marginBottom: 2 },
-  modalActions: { flexDirection: 'row', gap: 10, marginTop: 16 },
+  modalActions: { flexDirection: 'row', gap: 10, marginTop: 14 },
   modalBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 13, paddingHorizontal: 16, borderRadius: 12, borderWidth: 1 },
   modalBtnText: { fontSize: 14, fontWeight: '700' },
 });

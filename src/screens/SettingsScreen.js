@@ -35,7 +35,7 @@ export default function SettingsScreen() {
     { label: 'Cyan',    value: '#00F5C4' },
     { label: 'Blue',    value: '#4D9FFF' },
     { label: 'Gold',    value: '#FFD700' },
-    { label: 'White',   value: '#FFFFFF' },
+    { label: 'White',   value: '#600cf1ff' },
     { label: 'Orange',  value: '#FF7A00' },
     { label: 'Pink',    value: '#FF5FA0' },
     { label: 'Lime',    value: '#A8FF3E' },

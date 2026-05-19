@@ -1,13 +1,13 @@
 {
   "expo": {
-    "name": "GeoSnap",
+    "name": "Geo Snap",
     "slug": "geosnap",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/adaptive-icon.png",
+    "icon": "./assets/geo_snap_logo.png",
     "userInterfaceStyle": "dark",
     "splash": {
-      "backgroundColor": "#0A0A0F"
+      "backgroundColor": "#FFFFFF"
     },
     "ios": {
       "supportsTablet": false,
@@ -21,7 +21,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
+        "foregroundImage": "./assets/geo_snap_logo.png",
         "backgroundColor": "#0A0A0F"
       },
       "package": "com.geosnap.app",
@@ -30,13 +30,7 @@
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.READ_MEDIA_IMAGES",
-        "android.permission.WRITE_EXTERNAL_STORAGE",
-        "android.permission.READ_EXTERNAL_STORAGE",
-        "android.permission.RECORD_AUDIO",
-        "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
-        "android.permission.ACCESS_MEDIA_LOCATION",
-        "android.permission.READ_MEDIA_VIDEO",
-        "android.permission.READ_MEDIA_AUDIO"
+        "android.permission.ACCESS_MEDIA_LOCATION"
       ]
     },
     "plugins": [

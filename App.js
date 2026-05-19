@@ -1,13 +1,15 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { NavigationContainer, DefaultTheme, DarkTheme } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { View } from 'react-native';
 
 import CameraScreen from './src/screens/CameraScreen';
 import GalleryScreen from './src/screens/GalleryScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
+import SplashScreen from './src/components/SplashScreen';
 import { ThemeProvider, useTheme } from './src/context/ThemeContext';
 
 const Tab = createBottomTabNavigator();
@@ -39,6 +41,11 @@ function AppTabs() {
             paddingBottom: 6,
             paddingTop: 6,
             height: 64,
+            elevation: 12,
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: -2 },
+            shadowOpacity: 0.15,
+            shadowRadius: 8,
           },
           tabBarActiveTintColor: T.accent,
           tabBarInactiveTintColor: T.textMuted,
@@ -61,11 +68,25 @@ function AppTabs() {
   );
 }
 
+function AppContent() {
+  const [splashDone, setSplashDone] = useState(false);
+
+  if (!splashDone) {
+    return (
+      <View style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
+        <SplashScreen onFinish={() => setSplashDone(true)} />
+      </View>
+    );
+  }
+
+  return <AppTabs />;
+}
+
 export default function App() {
   return (
     <SafeAreaProvider>
       <ThemeProvider>
-        <AppTabs />
+        <AppContent />
       </ThemeProvider>
     </SafeAreaProvider>
   );
