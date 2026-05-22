@@ -4,6 +4,11 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const STORAGE_KEY_THEME  = '@geosnap_theme_pref';
 const STORAGE_KEY_ACCENT = '@geosnap_accent_color';
+const STORAGE_KEY_STAMP_POSITION = '@geosnap_stamp_position';
+const STORAGE_KEY_STAMP_MAP_SIZE = '@geosnap_stamp_map_size';
+const STORAGE_KEY_MAP_STYLE      = '@geosnap_map_style';
+const STORAGE_KEY_GPS_DEEPLINK   = '@geosnap_gps_deeplink';
+const STORAGE_KEY_AUTOSAVE       = '@geosnap_autosave';
 
 let _savedPref = 'auto';
 const ThemeContext = createContext();
@@ -66,18 +71,33 @@ export function ThemeProvider({ children }) {
   const systemScheme = useColorScheme();
   const [themePref, setThemePref] = useState(_savedPref);
   const [accentOverride, setAccentOverride] = useState(null);
+  const [stampPosition, setStampPosition] = useState('bottom');
+  const [stampMapSize, setStampMapSize] = useState('medium');
+  const [mapStyle, setMapStyle] = useState('satellite');
+  const [gpsDeeplink, setGpsDeeplink] = useState(false);
+  const [autoSave, setAutoSave] = useState(true);
   const [ready, setReady] = useState(false);
 
   // Load persisted values on first mount
   useEffect(() => {
     (async () => {
       try {
-        const [savedTheme, savedAccent] = await Promise.all([
+        const [savedTheme, savedAccent, savedStampPos, savedStampSize, savedMapStyle, savedGpsDeep, savedAutoSave] = await Promise.all([
           AsyncStorage.getItem(STORAGE_KEY_THEME),
           AsyncStorage.getItem(STORAGE_KEY_ACCENT),
+          AsyncStorage.getItem(STORAGE_KEY_STAMP_POSITION),
+          AsyncStorage.getItem(STORAGE_KEY_STAMP_MAP_SIZE),
+          AsyncStorage.getItem(STORAGE_KEY_MAP_STYLE),
+          AsyncStorage.getItem(STORAGE_KEY_GPS_DEEPLINK),
+          AsyncStorage.getItem(STORAGE_KEY_AUTOSAVE),
         ]);
         if (savedTheme) { _savedPref = savedTheme; setThemePref(savedTheme); }
         if (savedAccent) setAccentOverride(savedAccent);
+        if (savedStampPos) setStampPosition(savedStampPos);
+        if (savedStampSize) setStampMapSize(savedStampSize);
+        if (savedMapStyle) setMapStyle(savedMapStyle);
+        if (savedGpsDeep === 'true') setGpsDeeplink(true);
+        if (savedAutoSave !== null) setAutoSave(savedAutoSave === 'true');
       } catch {}
       setReady(true);
     })();
@@ -96,6 +116,31 @@ export function ThemeProvider({ children }) {
     } else {
       AsyncStorage.removeItem(STORAGE_KEY_ACCENT).catch(() => {});
     }
+  };
+
+  const saveStampPosition = (pos) => {
+    setStampPosition(pos);
+    AsyncStorage.setItem(STORAGE_KEY_STAMP_POSITION, pos).catch(() => {});
+  };
+
+  const saveStampMapSize = (size) => {
+    setStampMapSize(size);
+    AsyncStorage.setItem(STORAGE_KEY_STAMP_MAP_SIZE, size).catch(() => {});
+  };
+
+  const saveMapStyle = (style) => {
+    setMapStyle(style);
+    AsyncStorage.setItem(STORAGE_KEY_MAP_STYLE, style).catch(() => {});
+  };
+
+  const saveGpsDeeplink = (val) => {
+    setGpsDeeplink(val);
+    AsyncStorage.setItem(STORAGE_KEY_GPS_DEEPLINK, val ? 'true' : 'false').catch(() => {});
+  };
+
+  const saveAutoSave = (val) => {
+    setAutoSave(val);
+    AsyncStorage.setItem(STORAGE_KEY_AUTOSAVE, val ? 'true' : 'false').catch(() => {});
   };
 
   const resolvedMode = themePref === 'auto'
@@ -121,7 +166,15 @@ export function ThemeProvider({ children }) {
   if (!ready) return null;
 
   return (
-    <ThemeContext.Provider value={{ theme, themePref, setThemePref: saveThemePref, accentOverride, setAccentOverride: saveAccentOverride }}>
+    <ThemeContext.Provider value={{
+      theme, themePref, setThemePref: saveThemePref,
+      accentOverride, setAccentOverride: saveAccentOverride,
+      stampPosition, saveStampPosition,
+      stampMapSize, saveStampMapSize,
+      mapStyle, saveMapStyle,
+      gpsDeeplink, saveGpsDeeplink,
+      autoSave, saveAutoSave,
+    }}>
       {children}
     </ThemeContext.Provider>
   );

@@ -6,7 +6,7 @@ import { useTheme } from '../context/ThemeContext';
 
 
 export default function GpsOverlay({ location, address, forCapture = false, captureTime = null }) {
-  const { theme: T } = useTheme();
+  const { theme: T, stampPosition, stampMapSize } = useTheme();
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(16)).current;
   // Live clock — always synced to system time; frozen only on capture
@@ -89,9 +89,41 @@ export default function GpsOverlay({ location, address, forCapture = false, capt
   const lat = location?.coords?.latitude;
   const lon = location?.coords?.longitude;
 
+  const isTop = stampPosition === 'top';
+
+  // Dynamic Map Size Styles
+  let thumbSize = 68;
+  let cityFs = 13;
+  let addrFs = 9.5;
+  let dmsFs = 8.5;
+  let metaFs = 8;
+
+  if (stampMapSize === 'small') {
+    thumbSize = 52;
+    cityFs = 11;
+    addrFs = 8.5;
+    dmsFs = 7.5;
+    metaFs = 7;
+  } else if (stampMapSize === 'large') {
+    thumbSize = 84;
+    cityFs = 15;
+    addrFs = 10.5;
+    dmsFs = 9.5;
+    metaFs = 9.5;
+  }
+
   return (
     <Animated.View
-      style={[styles.container, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}
+      style={[
+        styles.container,
+        {
+          opacity: fadeAnim,
+          transform: [{ translateY: slideAnim }],
+          justifyContent: isTop ? 'flex-start' : 'flex-end',
+          paddingTop: 10,
+          paddingBottom: 10,
+        }
+      ]}
       pointerEvents={forCapture ? 'none' : 'box-none'}
     >
       {/* Top-left: Date/Time Badge — only on live viewfinder, NOT burned into saved image */}
@@ -108,7 +140,7 @@ export default function GpsOverlay({ location, address, forCapture = false, capt
         <View style={styles.mainRow}>
           {/* R2: Map thumbnail - tappable to open Google Maps */}
           <TouchableOpacity
-            style={styles.mapThumb}
+            style={[styles.mapThumb, { width: thumbSize, height: thumbSize }]}
             onPress={openGoogleMaps}
             disabled={!location}
             activeOpacity={0.8}
@@ -118,10 +150,10 @@ export default function GpsOverlay({ location, address, forCapture = false, capt
                 {mapTileUrl ? (
                   <View style={styles.mapBg}>
                     <Image
-                      source={{ uri: mapTileUrl }}
-                      style={styles.mapImage}
-                      resizeMode="cover"
-                    />
+                       source={{ uri: mapTileUrl }}
+                       style={styles.mapImage}
+                       resizeMode="cover"
+                     />
                     {/* Red location pin overlay */}
                     <View style={styles.pinOverlay} pointerEvents="none">
                       <View style={styles.mapPinOuter}>
@@ -142,10 +174,6 @@ export default function GpsOverlay({ location, address, forCapture = false, capt
                     <View style={styles.mapPinTip} />
                   </View>
                 )}
-                <View style={styles.mapLabel}>
-                  <Ionicons name="map" size={9} color="#4285F4" />
-                  <Text style={styles.mapLabelText}>Maps</Text>
-                </View>
               </>
             ) : (
               <View style={styles.mapBg}>
@@ -158,27 +186,27 @@ export default function GpsOverlay({ location, address, forCapture = false, capt
           <View style={styles.infoCol}>
             {/* City / Address */}
             {address ? (
-              <Text style={styles.cityText} numberOfLines={1}>{address}</Text>
+              <Text style={[styles.cityText, { fontSize: cityFs }]} numberOfLines={1}>{address}</Text>
             ) : (
-              <Text style={styles.cityText}>Locating...</Text>
+              <Text style={[styles.cityText, { fontSize: cityFs }]}>Locating...</Text>
             )}
 
             {/* Full address line */}
             {location && (
-              <Text style={styles.addressText} numberOfLines={2}>
+              <Text style={[styles.addressText, { fontSize: addrFs, lineHeight: addrFs + 3.5 }]} numberOfLines={2}>
                 Lat {lat?.toFixed(6)}, Long {lon?.toFixed(6)}
               </Text>
             )}
 
             {/* DMS Coordinates */}
             {location && (
-              <Text style={styles.dmsText} numberOfLines={1}>
+              <Text style={[styles.dmsText, { fontSize: dmsFs }]} numberOfLines={1}>
                 {formatCoord(lat, 'lat')}  {formatCoord(lon, 'lon')}
               </Text>
             )}
 
             {/* Date/Day/Time row */}
-            <Text style={styles.metaText}>
+            <Text style={[styles.metaText, { fontSize: metaFs }]}>
               {dayStr}, {dateStr} {timeStr} GMT+05:30
             </Text>
 
