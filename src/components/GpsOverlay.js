@@ -6,7 +6,7 @@ import { useTheme } from '../context/ThemeContext';
 
 
 export default function GpsOverlay({ location, address, forCapture = false, captureTime = null }) {
-  const { theme: T, stampPosition, stampMapSize } = useTheme();
+  const { theme: T, stampPosition, stampMapSize, horizontalMode, watermarkEnabled } = useTheme();
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(16)).current;
   // Live clock — always synced to system time; frozen only on capture
@@ -121,21 +121,19 @@ export default function GpsOverlay({ location, address, forCapture = false, capt
           transform: [{ translateY: slideAnim }],
           justifyContent: isTop ? 'flex-start' : 'flex-end',
           paddingTop: 10,
-          paddingBottom: 10,
+          paddingBottom: forCapture ? 10 : 180,
         }
       ]}
       pointerEvents={forCapture ? 'none' : 'box-none'}
     >
-      {/* Top-left: Date/Time Badge — only on live viewfinder, NOT burned into saved image */}
-      {!forCapture && (
-        <View style={styles.timeBadge}>
-          <Text style={[styles.timeText, { color: T.accent }]}>{timeStr}</Text>
-          <Text style={styles.dateText}>{dayStr}, {dateStr}</Text>
-        </View>
-      )}
 
       {/* Bottom: GPS Info Panel (matching reference image style) */}
-      <View style={styles.gpsPanel}>
+      <View style={[
+        styles.gpsPanel, 
+        forCapture && { backgroundColor: 'rgba(255,255,255,0.75)' },
+        horizontalMode && { transform: [{ rotate: '90deg' }, { translateX: 50 }, { translateY: -50 }] }
+      ]}>
+        
         {/* Main content row: Map thumbnail + Info */}
         <View style={styles.mainRow}>
           {/* R2: Map thumbnail - tappable to open Google Maps */}
@@ -207,12 +205,22 @@ export default function GpsOverlay({ location, address, forCapture = false, capt
 
             {/* Date/Day/Time row */}
             <Text style={[styles.metaText, { fontSize: metaFs }]}>
-              {dayStr}, {dateStr} {timeStr} GMT+05:30
+              {dayStr}, {dateStr} {timeStr}
             </Text>
 
           </View>
         </View>
       </View>
+
+      {/* Watermark brand row (bottom right corner) */}
+      {forCapture && watermarkEnabled && (
+        <View style={{ position: 'absolute', bottom: 10, right: 15 }}>
+          <Image 
+            source={require('../../assets/icon.png')} 
+            style={{ width: 80, height: 80, resizeMode: 'contain', opacity: 0.9 }} 
+          />
+        </View>
+      )}
     </Animated.View>
   );
 }

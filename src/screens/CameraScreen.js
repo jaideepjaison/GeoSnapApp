@@ -1,20 +1,26 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Alert,
   ActivityIndicator, Animated, Platform, Dimensions,
-  Image, Share, Linking, Clipboard,
+  Image, Linking, Clipboard,
   Modal, TextInput, KeyboardAvoidingView, ScrollView as ScrollViewRN,
 } from 'react-native';
+import Slider from '@react-native-community/slider';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import * as FileSystem from 'expo-file-system';
+import Share from 'react-native-share';
 import * as Location from 'expo-location';
 import * as MediaLibrary from 'expo-media-library';
 import * as Sharing from 'expo-sharing';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { captureRef } from 'react-native-view-shot';
+import { useFocusEffect } from '@react-navigation/native';
 import GpsOverlay from '../components/GpsOverlay';
 import FlashEffect from '../components/FlashEffect';
 import { useTheme } from '../context/ThemeContext';
+import { useAlert } from '../context/AlertContext';
+import { useCameraContext } from '../context/CameraContext';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
@@ -22,7 +28,18 @@ const { width: SCREEN_W } = Dimensions.get('window');
 let _mediaPermGranted = false;
 
 export default function CameraScreen({ route, navigation }) {
+  const getFlagEmoji = (countryCode) => {
+    if (!countryCode) return '';
+    const codePoints = countryCode
+      .toUpperCase()
+      .split('')
+      .map(char => 127397 + char.charCodeAt());
+    return String.fromCodePoint(...codePoints);
+  };
+
   const { theme, gpsDeeplink, autoSave } = useTheme();
+  const { showAlert, showToast } = useAlert();
+  const { triggerCapture } = useCameraContext();
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [locationPermission, setLocationPermission] = useState(null);
   const [location, setLocation] = useState(null);
@@ -32,6 +49,7 @@ export default function CameraScreen({ route, navigation }) {
   const [isSaving, setIsSaving] = useState(false);
   const [showFlash, setShowFlash] = useState(false);
   const [capturedPhoto, setCapturedPhoto] = useState(null);
+  const [stampedImageUri, setStampedImageUri] = useState(null);
   const [recentSavedPhoto, setRecentSavedPhoto] = useState(null);
   const [showShareModal, setShowShareModal] = useState(false);
   const [sharePhotoUri, setSharePhotoUri] = useState(null);
@@ -58,8 +76,9 @@ export default function CameraScreen({ route, navigation }) {
   const [focusPoint, setFocusPoint] = useState(null);
   const [exposure, setExposure] = useState(0); // -1 to 1
   const [showExposureSlider, setShowExposureSlider] = useState(false);
-  // Save toast
-  const [showSaveToast, setShowSaveToast] = useState(false);
+  // Glass Top Bar options
+  const [hdr, setHdr] = useState(false);
+  const [gridOn, setGridOn] = useState(false);
 
   const cameraRef = useRef(null);
   const viewShotRef = useRef(null);
@@ -112,6 +131,20 @@ export default function CameraScreen({ route, navigation }) {
     }
   }, [importedImageUri, navigation]);
 
+  const [isFocused, setIsFocused] = useState(false);
+  useFocusEffect(
+    useCallback(() => {
+      setIsFocused(true);
+      return () => setIsFocused(false);
+    }, [])
+  );
+
+  useEffect(() => {
+    if (triggerCapture > 0 && isFocused && !isSaving && !isPreview && !showShareModal && !showLocModal) {
+      animatedTakePicture();
+    }
+  }, [triggerCapture]);
+
   // Request permissions on mount
   useEffect(() => {
     (async () => {
@@ -141,7 +174,8 @@ export default function CameraScreen({ route, navigation }) {
             if (geo.length > 0) {
               const g = geo[0];
               const parts = [g.street, g.district, g.city, g.region, g.country].filter(Boolean);
-              setAddress(parts.slice(0, 3).join(', '));
+              const flag = getFlagEmoji(g.isoCountryCode);
+              setAddress(parts.slice(0, 3).join(', ') + (flag ? ` ${flag}` : ''));
             }
           } catch { setAddress(null); }
         }
@@ -240,7 +274,7 @@ export default function CameraScreen({ route, navigation }) {
         if (!_mediaPermGranted) {
           const p = await MediaLibrary.requestPermissionsAsync();
           if (p.status !== 'granted') {
-            Alert.alert('Permission Required', 'Please grant Photos access to save.');
+            showAlert('Permission Required', 'Please grant Photos access to save.');
             return;
           }
           _mediaPermGranted = true;
@@ -251,38 +285,7 @@ export default function CameraScreen({ route, navigation }) {
         setIsPreview(true);
         setIsSaving(true);
 
-        // Perform the background ViewShot render, stamp, and gallery saving
-        setTimeout(async () => {
-          try {
-            const uri = await captureRef(viewShotRef, { format: 'jpg', quality: 0.92 });
-            const asset = await MediaLibrary.createAssetAsync(uri);
-            try {
-              await MediaLibrary.createAlbumAsync('GeoSnap', asset, false);
-            } catch {}
-
-            // Trigger the premium floating thumbnail bubble animation
-            setRecentSavedPhoto(uri);
-            recentSavedPhotoScaleAnim.setValue(0);
-            Animated.sequence([
-              Animated.spring(recentSavedPhotoScaleAnim, { toValue: 1.15, tension: 70, friction: 6, useNativeDriver: true }),
-              Animated.spring(recentSavedPhotoScaleAnim, { toValue: 1, tension: 70, friction: 8, useNativeDriver: true }),
-              Animated.delay(3500),
-              Animated.timing(recentSavedPhotoScaleAnim, { toValue: 0, duration: 400, useNativeDriver: true }),
-            ]).start(() => setRecentSavedPhoto(null));
-
-            // Instantly clear captured photo and restore live viewfinder
-            setCapturedPhoto(null);
-            setIsPreview(false);
-            setCaptureTime(null);
-            setManualLocation(null);
-            setManualAddress(null);
-            setExposure(0);
-          } catch (err) {
-            Alert.alert('Error', 'Failed to auto-save: ' + err.message);
-          } finally {
-            setIsSaving(false);
-          }
-        }, 120);
+        // Capture is triggered by the Image onLoad event to prevent black screens.
       } else {
         setCaptureTime(new Date());
         setManualLocation(null);
@@ -294,25 +297,8 @@ export default function CameraScreen({ route, navigation }) {
         Animated.spring(previewSlideAnim, { toValue: 0, friction: 8, useNativeDriver: true }).start();
       }
     } catch (err) {
-      Alert.alert('Error', 'Failed to take photo.');
+      showAlert('Error', 'Failed to take photo.');
     }
-  };
-
-  // ============== SAVE TOAST ==============
-  const showToast = () => {
-    setShowSaveToast(true);
-    toastSlideAnim.setValue(-60);
-    toastOpacityAnim.setValue(0);
-    Animated.parallel([
-      Animated.spring(toastSlideAnim, { toValue: 10, friction: 8, useNativeDriver: true }),
-      Animated.timing(toastOpacityAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
-    ]).start();
-    setTimeout(() => {
-      Animated.parallel([
-        Animated.timing(toastSlideAnim, { toValue: -60, duration: 300, useNativeDriver: true }),
-        Animated.timing(toastOpacityAnim, { toValue: 0, duration: 300, useNativeDriver: true }),
-      ]).start(() => setShowSaveToast(false));
-    }, 2000);
   };
 
   // ============== SAVE (silent, no dialog) ==============
@@ -321,7 +307,7 @@ export default function CameraScreen({ route, navigation }) {
     if (!_mediaPermGranted) {
       const p = await MediaLibrary.requestPermissionsAsync();
       if (p.status !== 'granted') {
-        Alert.alert('Permission Required', 'Please grant Photos access to save.');
+        showAlert('Permission Required', 'Please grant Photos access to save.');
         return null;
       }
       _mediaPermGranted = true;
@@ -330,10 +316,15 @@ export default function CameraScreen({ route, navigation }) {
     try {
       const uri = await captureRef(viewShotRef, { format: 'jpg', quality: 0.92 });
       const asset = await MediaLibrary.createAssetAsync(uri);
-      try { await MediaLibrary.createAlbumAsync('GeoSnap', asset, false); } catch {}
+      let album = await MediaLibrary.getAlbumAsync('GeoSnap');
+      if (!album) {
+        await MediaLibrary.createAlbumAsync('GeoSnap', asset, true);
+      } else {
+        await MediaLibrary.addAssetsToAlbumAsync([asset], album, true);
+      }
       return uri;
     } catch (err) {
-      Alert.alert('Error', 'Failed to save: ' + err.message);
+      showAlert('Error', 'Failed to save: ' + err.message);
       return null;
     } finally {
       setIsSaving(false);
@@ -377,7 +368,7 @@ export default function CameraScreen({ route, navigation }) {
   const handleSaveAndShare = async () => {
     const uri = await savePhoto();
     if (!uri) return;
-    showToast(); // Show "Saved!" toast
+    showToast('Saved to GeoSnap'); // Show "Saved!" toast
     triggerShareModal(uri);
   };
 
@@ -385,31 +376,20 @@ export default function CameraScreen({ route, navigation }) {
   const handleSaveOnly = async () => {
     const uri = await savePhoto();
     if (!uri) return;
-    showToast();
+    showToast('Saved to GeoSnap');
     setTimeout(retake, 1500);
   };
 
-  // Share only (also auto-saves)
-  const handleShareOnly = async () => {
-    if (!capturedPhoto || isSaving) return;
-    setIsSaving(true);
-    try {
-      const uri = await captureRef(viewShotRef, { format: 'jpg', quality: 0.92 });
-      const asset = await MediaLibrary.createAssetAsync(uri);
-      try { await MediaLibrary.createAlbumAsync('GeoSnap', asset, false); } catch {}
-      const msg = getShareMessage();
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(uri, { mimeType: 'image/jpeg', dialogTitle: 'Share GeoSnap photo' });
-      } else {
-        await Share.share({ url: uri, message: msg });
+  const handleShareAutoSaved = async () => {
+    if (stampedImageUri) {
+      try {
+        await Share.open({ url: stampedImageUri, failOnCancel: false });
+      } catch (err) {
+        console.log(err);
       }
-      retake();
-    } catch (err) {
-      Alert.alert('Error', err.message);
-    } finally {
-      setIsSaving(false);
     }
   };
+
 
   const retake = () => {
     setCapturedPhoto(null);
@@ -417,6 +397,7 @@ export default function CameraScreen({ route, navigation }) {
     setCaptureTime(null);
     setManualLocation(null);
     setManualAddress(null);
+    setStampedImageUri(null);
   };
 
   // Manual location helpers
@@ -457,7 +438,9 @@ export default function CameraScreen({ route, navigation }) {
   const selectSearchResult = (result) => {
     const lat = parseFloat(result.lat);
     const lon = parseFloat(result.lon);
-    const name = result.display_name.split(',').slice(0, 3).join(',').trim();
+    const countryCode = result.address?.country_code;
+    const flag = getFlagEmoji(countryCode);
+    const name = result.display_name.split(',').slice(0, 3).join(',').trim() + (flag ? ` ${flag}` : '');
     setEditLat(lat.toFixed(6));
     setEditLon(lon.toFixed(6));
     setEditAddr(name);
@@ -500,29 +483,16 @@ export default function CameraScreen({ route, navigation }) {
 
   return (
     <View style={[styles.container, { backgroundColor: '#000' }]}>
-      {/* Header */}
+      {/* Header — Liquid Glass Circular Buttons: Flash | HDR | Grid | Settings */}
       <SafeAreaView edges={['top']} style={styles.absoluteHeader}>
-        <View style={styles.headerContentTranslucent}>
-          <View style={styles.headerProfileRow}>
-            <View style={styles.logoWrap}>
-              <Image source={require('../../assets/geo_snap_logo.png')} style={styles.headerLogoImg} resizeMode="contain" />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.greetingText, { color: location ? T.accentGreen : 'rgba(255,255,255,0.7)' }]}>
-                {location ? 'GPS Connected • Live' : 'Satellites Acquiring...'}
-              </Text>
-              <Text style={[styles.profileNameText, { color: '#FFF' }]}>GeoSnap Camera</Text>
-            </View>
-            {location && (
-              <TouchableOpacity
-                style={[styles.headerBtn, { backgroundColor: 'rgba(0,0,0,0.4)', borderColor: 'rgba(255,255,255,0.2)', borderWidth: 1 }]}
-                onPress={openMaps}
-                activeOpacity={0.8}
-              >
-                <Ionicons name="navigate-outline" size={16} color={T.accent} />
-              </TouchableOpacity>
-            )}
-          </View>
+        <View style={styles.headerBar}>
+
+          <TouchableOpacity style={styles.glassCircleBtn} onPress={() => setHdr(!hdr)}>
+            <Ionicons name={hdr ? 'contrast' : 'contrast-outline'} size={20} color={hdr ? T.accent : '#FFF'} />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.glassCircleBtn} onPress={() => setGridOn(!gridOn)}>
+            <Ionicons name={gridOn ? 'grid' : 'grid-outline'} size={20} color={gridOn ? T.accent : '#FFF'} />
+          </TouchableOpacity>
         </View>
       </SafeAreaView>
 
@@ -536,7 +506,43 @@ export default function CameraScreen({ route, navigation }) {
         onTouchEnd={handleTouchEnd}
       >
         {isPreview && capturedPhoto ? (
-          <Image source={{ uri: capturedPhoto.uri }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+          <Image 
+            source={{ uri: capturedPhoto.uri }} 
+            style={StyleSheet.absoluteFill} 
+            resizeMode="cover" 
+            onLoad={() => {
+              if (isSaving && autoSave) {
+                // Wait briefly for native UI render cycle
+                setTimeout(async () => {
+                  try {
+                    const uri = await captureRef(viewShotRef, { format: 'jpg', quality: 0.92 });
+                    const asset = await MediaLibrary.createAssetAsync(uri);
+                    let album = await MediaLibrary.getAlbumAsync('GeoSnap');
+                    if (!album) {
+                      await MediaLibrary.createAlbumAsync('GeoSnap', asset, true);
+                    } else {
+                      await MediaLibrary.addAssetsToAlbumAsync([asset], album, true);
+                    }
+                    setStampedImageUri(uri);
+                    
+                    setRecentSavedPhoto(uri);
+                    recentSavedPhotoScaleAnim.setValue(0);
+                    Animated.sequence([
+                      Animated.spring(recentSavedPhotoScaleAnim, { toValue: 1.15, tension: 70, friction: 6, useNativeDriver: true }),
+                      Animated.spring(recentSavedPhotoScaleAnim, { toValue: 1, tension: 70, friction: 8, useNativeDriver: true }),
+                      Animated.delay(3500),
+                      Animated.timing(recentSavedPhotoScaleAnim, { toValue: 0, duration: 400, useNativeDriver: true }),
+                    ]).start(() => setRecentSavedPhoto(null));
+                    setExposure(0);
+                  } catch (err) {
+                    showAlert('Error', 'Failed to auto-save: ' + err.message);
+                  } finally {
+                    setIsSaving(false);
+                  }
+                }, 150);
+              }
+            }}
+          />
         ) : (
           <>
             <CameraView
@@ -586,26 +592,24 @@ export default function CameraScreen({ route, navigation }) {
         <GpsOverlay
           location={manualLocation || location}
           address={manualAddress ?? address}
-          forCapture
+          forCapture={isPreview}
           captureTime={captureTime}
         />
 
-        {/* Zoom buttons — floating in camera area */}
+        {/* Zoom badge */}
         {!isPreview && (
-          <View style={styles.zoomFloat}>
-            {ZOOM_LABELS.map((lbl, i) => (
-              <TouchableOpacity
-                key={i}
-                style={[
-                  styles.zoomFloatBtn,
-                  i === currentZoomIdx && { backgroundColor: T.accent, borderColor: T.accent },
-                ]}
-                onPress={() => { setZoom(ZOOM_LEVELS[i]); setShowZoomBar(true); setTimeout(() => setShowZoomBar(false), 1500); }}
-              >
-                <Text style={[styles.zoomFloatText, i === currentZoomIdx && { color: T.mode === 'dark' ? '#000' : '#FFF' }]}>{lbl}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
+          <TouchableOpacity
+            style={styles.zoomBadge}
+            activeOpacity={0.7}
+            onTouchStart={(e) => e.stopPropagation()}
+            onTouchEnd={(e) => e.stopPropagation()}
+            onPress={() => {
+              const next = (currentZoomIdx + 1) % ZOOM_LEVELS.length;
+              setZoom(ZOOM_LEVELS[next]);
+            }}
+          >
+            <Text style={styles.zoomBadgeText}>{ZOOM_LABELS[currentZoomIdx]}</Text>
+          </TouchableOpacity>
         )}
 
         {showFlash && <FlashEffect />}
@@ -703,99 +707,47 @@ export default function CameraScreen({ route, navigation }) {
         )}
       </View>
 
-      {/* Save toast */}
-      {showSaveToast && (
-        <Animated.View
-          style={[
-            styles.saveToast,
-            {
-              backgroundColor: T.accent,
-              transform: [{ translateY: toastSlideAnim }],
-              opacity: toastOpacityAnim,
-            },
-          ]}
-        >
-          <Ionicons name="checkmark-circle" size={18} color={T.mode === 'dark' ? '#000' : '#FFF'} />
-          <Text style={[styles.saveToastText, { color: T.mode === 'dark' ? '#000' : '#FFF' }]}>
-            Saved to GeoSnap
-          </Text>
-        </Animated.View>
-      )}
+
       
 
 
-      {/* Controls Overlay */}
-      <SafeAreaView edges={['bottom']} style={styles.absoluteFooter}>
-        <View style={styles.footerContentTranslucent}>
+
+      {/* Bottom Controls — Gallery | Shutter | Switch (matching reference) */}
+      <View style={styles.bottomControlsWrap}>
         {isPreview ? (
-          <Animated.View style={{ transform: [{ translateY: previewSlideAnim }] }}>
-            {/* Preview action buttons */}
-            <View style={styles.previewControls}>
-              <TouchableOpacity style={[styles.previewBtn, { backgroundColor: T.surface2, borderColor: T.border }]} onPress={retake}>
-                <Ionicons name="refresh-outline" size={20} color={T.danger} />
-                <Text style={[styles.previewBtnText, { color: T.danger }]}>Retake</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.saveBtn, { backgroundColor: T.accent }, isSaving && styles.saveBtnDisabled]}
-                onPress={handleSaveOnly}
-                disabled={isSaving}
-              >
-                {isSaving
-                  ? <ActivityIndicator color={T.mode === 'dark' ? '#0A0A0F' : '#FFF'} size="small" />
-                  : <>
-                      <Ionicons name="save-outline" size={20} color={T.mode === 'dark' ? '#0A0A0F' : '#FFF'} />
-                      <Text style={[styles.saveBtnText, { color: T.mode === 'dark' ? '#0A0A0F' : '#FFF' }]}>Save</Text>
-                    </>
-                }
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.shareBtn, { backgroundColor: T.surface2, borderColor: T.border }]}
-                onPress={handleSaveAndShare}
-                disabled={isSaving}
-              >
-                <Ionicons name="share-social-outline" size={20} color={T.accent} />
-                <Text style={[styles.previewBtnText, { color: T.accent }]}>Share</Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Edit Location row */}
-            <TouchableOpacity
-              style={[styles.editLocBtn, { backgroundColor: T.surface2, borderColor: manualLocation ? T.accent : T.border }]}
-              onPress={openLocModal}
-            >
-              <Ionicons name="location-outline" size={15} color={manualLocation ? T.accent : T.textSub} />
-              <Text style={[styles.editLocText, { color: manualLocation ? T.accent : T.textSub }]}>
-                {manualLocation
-                  ? `📍 ${manualLocation.coords.latitude.toFixed(5)}, ${manualLocation.coords.longitude.toFixed(5)}`
-                  : 'Edit Location on Stamp'}
-              </Text>
-              <Ionicons name="pencil-outline" size={13} color={manualLocation ? T.accent : T.textMuted} />
+          <View style={styles.previewActions}>
+            <TouchableOpacity style={[styles.previewCircleBtn, { backgroundColor: T.accent }]} onPress={handleShareAutoSaved} disabled={!stampedImageUri}>
+              <Ionicons name="share-social-outline" size={22} color="#FFF" />
+              <Text style={styles.previewCircleBtnLabel}>Share</Text>
             </TouchableOpacity>
-          </Animated.View>
+            <TouchableOpacity style={[styles.previewCircleBtn, { backgroundColor: 'rgba(255,255,255,0.15)' }]} onPress={openLocModal}>
+              <Ionicons name="create-outline" size={22} color="#FFF" />
+              <Text style={styles.previewCircleBtnLabel}>Edit</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.previewCircleBtn, { backgroundColor: 'rgba(255,255,255,0.15)' }]} onPress={retake}>
+              <Ionicons name="close-outline" size={22} color="#FFF" />
+              <Text style={styles.previewCircleBtnLabel}>Close</Text>
+            </TouchableOpacity>
+          </View>
         ) : (
-          <View style={styles.shootControls}>
-            {/* Flash */}
-            <TouchableOpacity style={[styles.controlBtn, { backgroundColor: T.controlBg, borderColor: T.border }]} onPress={toggleFlash}>
+          <View style={styles.shootRow}>
+            {/* Flash toggle */}
+            <TouchableOpacity style={styles.galleryThumb} onPress={toggleFlash}>
               <Ionicons name={flashIcon} size={24} color={flashColor} />
             </TouchableOpacity>
-
             {/* Shutter */}
             <Animated.View style={{ transform: [{ scale: shutterScaleAnim }] }}>
-              <TouchableOpacity style={[styles.shutterBtn, { borderColor: T.shutterBorder }]} onPress={animatedTakePicture} disabled={isSaving}>
-                <View style={[styles.shutterInner, { backgroundColor: T.mode === 'dark' ? '#FFF' : T.accent }]} />
+              <TouchableOpacity style={[styles.shutterBtn, { borderColor: T.accent }]} onPress={animatedTakePicture} disabled={isSaving}>
+                <View style={[styles.shutterInner, { backgroundColor: '#FFF' }]} />
               </TouchableOpacity>
             </Animated.View>
-
-            {/* Flip */}
-            <TouchableOpacity style={[styles.controlBtn, { backgroundColor: T.controlBg, borderColor: T.border }]} onPress={toggleFacing}>
-              <Ionicons name="camera-reverse-outline" size={24} color={T.textSub} />
+            {/* Switch camera */}
+            <TouchableOpacity style={styles.switchCamBtn} onPress={toggleFacing}>
+              <Ionicons name="camera-reverse-outline" size={24} color="#FFF" />
             </TouchableOpacity>
           </View>
         )}
-        </View>
-      </SafeAreaView>
+      </View>
 
       {/* Manual Location Modal */}
       <Modal
@@ -957,7 +909,7 @@ export default function CameraScreen({ route, navigation }) {
                       const lat = parseFloat(editLat);
                       const lon = parseFloat(editLon);
                       if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
-                        Alert.alert('Invalid', 'Enter valid lat/lon.');
+                        showAlert('Invalid', 'Enter valid lat/lon.');
                         return;
                       }
                       setManualLocation({ coords: { latitude: lat, longitude: lon } });
@@ -1121,18 +1073,10 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 12 },
   
-  // Overlays
-  absoluteHeader: { zIndex: 10, backgroundColor: '#000' },
-  headerContentTranslucent: { paddingHorizontal: 16, paddingVertical: 14 },
-  absoluteFooter: { zIndex: 10, backgroundColor: '#000' },
-  footerContentTranslucent: { paddingBottom: 10, paddingTop: 10 },
-  
-  headerProfileRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  logoWrap: { width: 36, height: 36, borderRadius: 8, overflow: 'hidden' },
-  headerLogoImg: { width: '100%', height: '100%' },
-  greetingText: { fontSize: 10, fontWeight: '700', letterSpacing: 0.5, textShadowColor: 'rgba(0,0,0,0.5)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 },
-  profileNameText: { fontSize: 15, fontWeight: '800', letterSpacing: 0.2, marginTop: 1, textShadowColor: 'rgba(0,0,0,0.5)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 },
-  headerBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  // Header — clean bar
+  absoluteHeader: { zIndex: 10, backgroundColor: 'transparent' },
+  headerBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12 },
+  glassCircleBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.2, shadowRadius: 4 },
   
   camera: { flex: 1 },
   grid: { ...StyleSheet.absoluteFillObject },
@@ -1144,31 +1088,48 @@ const styles = StyleSheet.create({
   bracketTR: { top: 16, right: 16, borderTopWidth: 2, borderRightWidth: 2 },
   bracketBL: { bottom: 16, left: 16, borderBottomWidth: 2, borderLeftWidth: 2 },
   bracketBR: { bottom: 16, right: 16, borderBottomWidth: 2, borderRightWidth: 2 },
+
+  // Zoom badge
+  zoomBadge: { position: 'absolute', top: 20, left: 20, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8, borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)' },
+  zoomBadgeText: { color: '#FFF', fontSize: 13, fontWeight: '700' },
+  // Flip overlay
+  flipOverlay: { position: 'absolute', top: 20, right: 20, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 22, width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)' },
+
+  // Zoom indicator
   zoomIndicator: { position: 'absolute', top: 12, alignSelf: 'center', flexDirection: 'row', gap: 6, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4 },
   zoomPip: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.15)' },
   zoomPipText: { fontSize: 11, fontWeight: '700' },
+
   // Focus ring
   focusRing: { position: 'absolute', width: 60, height: 60, borderRadius: 8, borderWidth: 2 },
-  // Floating zoom inside camera
-  zoomFloat: { position: 'absolute', bottom: 105, alignSelf: 'center', flexDirection: 'row', gap: 6, backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 22, paddingHorizontal: 6, paddingVertical: 4 },
-  zoomFloatBtn: { paddingHorizontal: 14, paddingVertical: 5, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.12)' },
-  zoomFloatText: { fontSize: 12, fontWeight: '700', color: '#FFF' },
+
+  // GPS Panel — Liquid Glass
+  gpsPanel: { position: 'absolute', bottom: 100, left: 16, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 24, paddingHorizontal: 18, paddingVertical: 14, maxWidth: 220, zIndex: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.4)', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 10 },
+  gpsPanelRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 },
+  gpsPanelLabel: { color: '#FFF', fontSize: 12, fontWeight: '800', letterSpacing: 1 },
+  gpsDot: { width: 8, height: 8, borderRadius: 4, shadowColor: '#22C55E', shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.8, shadowRadius: 4 },
+  gpsPanelCoord: { color: '#FFF', fontSize: 12, fontWeight: '600', fontFamily: Platform.OS === 'ios' ? 'Courier New' : 'monospace', textShadowColor: 'rgba(0,0,0,0.3)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 },
+  gpsPanelAddr: { color: 'rgba(255,255,255,0.85)', fontSize: 11, marginTop: 4, fontWeight: '500' },
+
+  // Bottom controls
+  bottomControlsWrap: { backgroundColor: 'transparent', position: 'absolute', bottom: 0, left: 0, right: 0, paddingBottom: 100, paddingTop: 30, zIndex: 10 },
+  shootRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', paddingHorizontal: 40 },
+  galleryThumb: { width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.4)' },
+  galleryThumbImg: { width: '100%', height: '100%', borderRadius: 24 },
+  shutterBtn: { width: 76, height: 76, borderRadius: 38, borderWidth: 3, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.1)', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 12 },
+  shutterInner: { width: 60, height: 60, borderRadius: 30 },
+  switchCamBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' },
+
+  // Preview action buttons (circular like the design)
+  previewActions: { flexDirection: 'row', justifyContent: 'center', gap: 28, paddingVertical: 12 },
+  previewCircleBtn: { width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center' },
+  previewCircleBtnLabel: { color: '#FFF', fontSize: 10, fontWeight: '600', marginTop: 4, position: 'absolute', bottom: -18 },
+
   // Save toast
   saveToast: { position: 'absolute', top: 0, left: 0, right: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 12, paddingHorizontal: 20, zIndex: 100 },
   saveToastText: { fontSize: 14, fontWeight: '700' },
-  // Controls
-  controls: { borderTopWidth: 1 },
-  shootControls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', paddingHorizontal: 32, paddingVertical: 10 },
-  controlBtn: { width: 46, height: 46, borderRadius: 23, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
-  shutterBtn: { width: 68, height: 68, borderRadius: 34, borderWidth: 3, alignItems: 'center', justifyContent: 'center' },
-  shutterInner: { width: 54, height: 54, borderRadius: 27 },
-  previewControls: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10, gap: 10 },
-  previewBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12, borderWidth: 1 },
-  shareBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12, borderWidth: 1 },
-  previewBtnText: { fontSize: 14, fontWeight: '600' },
-  saveBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 10, borderRadius: 12 },
-  saveBtnDisabled: { opacity: 0.5 },
-  saveBtnText: { fontSize: 14, fontWeight: '700' },
+
+  // Permissions
   permText: { fontSize: 20, fontWeight: '700', textAlign: 'center' },
   permSubText: { fontSize: 14, textAlign: 'center', lineHeight: 22 },
   permBtn: { paddingHorizontal: 32, paddingVertical: 14, borderRadius: 14 },
