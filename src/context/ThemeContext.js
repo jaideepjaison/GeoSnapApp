@@ -11,9 +11,46 @@ const STORAGE_KEY_GPS_DEEPLINK   = '@geosnap_gps_deeplink';
 const STORAGE_KEY_AUTOSAVE       = '@geosnap_autosave';
 const STORAGE_KEY_HORIZONTAL     = '@geosnap_horizontal_mode';
 const STORAGE_KEY_WATERMARK      = '@geosnap_watermark_enabled';
+const STORAGE_KEY_SHOW_LOCATION  = '@geosnap_show_location';
+const STORAGE_KEY_SHOW_FLAG      = '@geosnap_show_flag';
+const STORAGE_KEY_SHOW_LATLONG   = '@geosnap_show_latlong';
+const STORAGE_KEY_SHOW_DATE      = '@geosnap_show_date';
+const STORAGE_KEY_MUTE_AUDIO     = '@geosnap_mute_audio';
 
 let _savedPref = 'auto';
-const ThemeContext = createContext();
+const defaultContextValue = {
+  theme: DARK,
+  themePref: 'dark',
+  setThemePref: () => {},
+  accentOverride: null,
+  setAccentOverride: () => {},
+  stampPosition: 'bottom',
+  saveStampPosition: () => {},
+  stampMapSize: 'medium',
+  saveStampMapSize: () => {},
+  mapStyle: 'satellite',
+  saveMapStyle: () => {},
+  gpsDeeplink: false,
+  saveGpsDeeplink: () => {},
+  autoSave: true,
+  saveAutoSave: () => {},
+  horizontalMode: false,
+  saveHorizontalMode: () => {},
+  watermarkEnabled: true,
+  saveWatermarkEnabled: () => {},
+  showLocation: true,
+  saveShowLocation: () => {},
+  showFlag: true,
+  saveShowFlag: () => {},
+  showLatLong: true,
+  saveShowLatLong: () => {},
+  showDate: false,
+  saveShowDate: () => {},
+  muteAudio: false,
+  saveMuteAudio: () => {},
+};
+
+const ThemeContext = createContext(defaultContextValue);
 
 /* ── GEO SNAP LIQUID GLASS PALETTE ── */
 export const LIGHT = {
@@ -89,12 +126,17 @@ export function ThemeProvider({ children }) {
   const [autoSave, setAutoSave] = useState(true);
   const [horizontalMode, setHorizontalMode] = useState(false);
   const [watermarkEnabled, setWatermarkEnabled] = useState(true);
+  const [showLocation, setShowLocation] = useState(true);
+  const [showFlag, setShowFlag] = useState(true);
+  const [showLatLong, setShowLatLong] = useState(true);
+  const [showDate, setShowDate] = useState(false);
+  const [muteAudio, setMuteAudio] = useState(false);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
     (async () => {
       try {
-        const [savedTheme, savedAccent, savedStampPos, savedStampSize, savedMapStyle, savedGpsDeep, savedHorizontal, savedWatermark] = await Promise.all([
+        const [savedTheme, savedAccent, savedStampPos, savedStampSize, savedMapStyle, savedGpsDeep, savedHorizontal, savedWatermark, savedLoc, savedFlag, savedLatLong, savedDate, savedMuteAudio] = await Promise.all([
           AsyncStorage.getItem(STORAGE_KEY_THEME),
           AsyncStorage.getItem(STORAGE_KEY_ACCENT),
           AsyncStorage.getItem(STORAGE_KEY_STAMP_POSITION),
@@ -103,6 +145,11 @@ export function ThemeProvider({ children }) {
           AsyncStorage.getItem(STORAGE_KEY_GPS_DEEPLINK),
           AsyncStorage.getItem(STORAGE_KEY_HORIZONTAL),
           AsyncStorage.getItem(STORAGE_KEY_WATERMARK),
+          AsyncStorage.getItem(STORAGE_KEY_SHOW_LOCATION),
+          AsyncStorage.getItem(STORAGE_KEY_SHOW_FLAG),
+          AsyncStorage.getItem(STORAGE_KEY_SHOW_LATLONG),
+          AsyncStorage.getItem(STORAGE_KEY_SHOW_DATE),
+          AsyncStorage.getItem(STORAGE_KEY_MUTE_AUDIO),
         ]);
         if (savedTheme) { _savedPref = savedTheme; setThemePref(savedTheme); }
         if (savedAccent) setAccentOverride(savedAccent);
@@ -112,6 +159,11 @@ export function ThemeProvider({ children }) {
         if (savedGpsDeep === 'true') setGpsDeeplink(true);
         if (savedHorizontal === 'true') setHorizontalMode(true);
         if (savedWatermark === 'false') setWatermarkEnabled(false);
+        if (savedLoc === 'false') setShowLocation(false);
+        if (savedFlag === 'false') setShowFlag(false);
+        if (savedLatLong === 'false') setShowLatLong(false);
+        if (savedDate === 'true') setShowDate(true);
+        if (savedMuteAudio === 'true') setMuteAudio(true);
         setAutoSave(true);
       } catch {}
       setReady(true);
@@ -127,6 +179,11 @@ export function ThemeProvider({ children }) {
   const saveAutoSave = (val) => { setAutoSave(val); AsyncStorage.setItem(STORAGE_KEY_AUTOSAVE, val ? 'true' : 'false').catch(() => {}); };
   const saveHorizontalMode = (val) => { setHorizontalMode(val); AsyncStorage.setItem(STORAGE_KEY_HORIZONTAL, val ? 'true' : 'false').catch(() => {}); };
   const saveWatermarkEnabled = (val) => { setWatermarkEnabled(val); AsyncStorage.setItem(STORAGE_KEY_WATERMARK, val ? 'true' : 'false').catch(() => {}); };
+  const saveShowLocation = (val) => { setShowLocation(val); AsyncStorage.setItem(STORAGE_KEY_SHOW_LOCATION, val ? 'true' : 'false').catch(() => {}); };
+  const saveShowFlag = (val) => { setShowFlag(val); AsyncStorage.setItem(STORAGE_KEY_SHOW_FLAG, val ? 'true' : 'false').catch(() => {}); };
+  const saveShowLatLong = (val) => { setShowLatLong(val); AsyncStorage.setItem(STORAGE_KEY_SHOW_LATLONG, val ? 'true' : 'false').catch(() => {}); };
+  const saveShowDate = (val) => { setShowDate(val); AsyncStorage.setItem(STORAGE_KEY_SHOW_DATE, val ? 'true' : 'false').catch(() => {}); };
+  const saveMuteAudio = (val) => { setMuteAudio(val); AsyncStorage.setItem(STORAGE_KEY_MUTE_AUDIO, val ? 'true' : 'false').catch(() => {}); };
 
   const resolvedMode = themePref === 'auto' ? (systemScheme === 'dark' ? 'dark' : 'light') : themePref;
   const baseTheme = resolvedMode === 'dark' ? DARK : LIGHT;
@@ -134,8 +191,6 @@ export function ThemeProvider({ children }) {
   const theme = accentOverride
     ? { ...baseTheme, accent: accentOverride, accentGreen: accentOverride, shutterBorder: accentOverride, shutterGlow: accentOverride, panelAccent: accentOverride, coordDecimal: accentOverride, panelBorder: `${accentOverride}66` }
     : baseTheme;
-
-  if (!ready) return null;
 
   return (
     <ThemeContext.Provider value={{
@@ -148,10 +203,16 @@ export function ThemeProvider({ children }) {
       autoSave, saveAutoSave,
       horizontalMode, saveHorizontalMode,
       watermarkEnabled, saveWatermarkEnabled,
+      showLocation, saveShowLocation,
+      showFlag, saveShowFlag,
+      showLatLong, saveShowLatLong,
+      showDate, saveShowDate,
+      muteAudio, saveMuteAudio,
+      ready,
     }}>
       {children}
     </ThemeContext.Provider>
   );
 }
 
-export const useTheme = () => useContext(ThemeContext);
+export const useTheme = () => useContext(ThemeContext) || defaultContextValue;

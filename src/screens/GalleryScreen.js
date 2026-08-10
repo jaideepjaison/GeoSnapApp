@@ -3,6 +3,7 @@ import {
   View, Text, StyleSheet, SectionList, Image,
   TouchableOpacity, ActivityIndicator,
   Dimensions, Modal, Platform, Animated, Clipboard, ScrollView, TextInput,
+  KeyboardAvoidingView,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as MediaLibrary from 'expo-media-library';
@@ -13,12 +14,49 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import * as FileSystem from 'expo-file-system';
 import piexif from 'piexifjs';
 import Share from 'react-native-share';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useTheme } from '../context/ThemeContext';
 import { useAlert } from '../context/AlertContext';
 import ImageViewer from 'react-native-image-zoom-viewer';
+import GpsOverlay from '../components/GpsOverlay';
+let ExpoVideoModule = null;
+try {
+  ExpoVideoModule = require('expo-video');
+} catch (e) {
+  ExpoVideoModule = null;
+}
+
+function VideoPlayerView({ videoUri, location, address }) {
+  if (ExpoVideoModule && ExpoVideoModule.useVideoPlayer && ExpoVideoModule.VideoView) {
+    const { useVideoPlayer, VideoView } = ExpoVideoModule;
+    const player = useVideoPlayer({ uri: videoUri }, p => {
+      p.loop = true;
+      p.play();
+    });
+
+    return (
+      <View style={{ flex: 1, width: '100%', minHeight: 400, justifyContent: 'center', alignItems: 'center' }}>
+        <VideoView
+          style={{ width: '100%', height: '100%' }}
+          player={player}
+          allowsFullscreen
+          allowsPictureInPicture
+          nativeControls
+        />
+        <GpsOverlay forCapture={true} location={location} address={address} />
+      </View>
+    );
+  }
+
+  return (
+    <View style={{ flex: 1, width: '100%', minHeight: 400, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000' }}>
+      <Image source={{ uri: videoUri }} style={{ width: '100%', height: '100%' }} resizeMode="contain" />
+      <GpsOverlay forCapture={true} location={location} address={address} />
+    </View>
+  );
+}
 
 const { width, height } = Dimensions.get('window');
 const COLS = 3;
@@ -74,6 +112,11 @@ function FadeInPhoto({ photo, onPress, onLongPress, isSelected, selectionMode, T
     >
       <Animated.View style={{ width: '100%', height: '100%', opacity }}>
         <Image source={{ uri: photo.uri }} style={styles.photo} />
+        {photo.mediaType === 'video' && (
+          <View style={{ position: 'absolute', top: 6, right: 6, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 12, padding: 3 }}>
+            <Ionicons name="videocam" size={14} color="#FFF" />
+          </View>
+        )}
         {selectionMode && (
           <View style={[styles.selectionOverlay, isSelected && { backgroundColor: 'rgba(0,0,0,0.3)' }]}>
             <View style={[styles.checkbox, isSelected && styles.checkboxSelected, { borderColor: T.text }]}>
@@ -89,6 +132,7 @@ function FadeInPhoto({ photo, onPress, onLongPress, isSelected, selectionMode, T
 export default function GalleryScreen({ navigation }) {
   const { theme: T } = useTheme();
   const { showAlert, showToast } = useAlert();
+  const insets = useSafeAreaInsets();
   const [photos, setPhotos] = useState([]);
   const [sections, setSections] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -105,7 +149,32 @@ export default function GalleryScreen({ navigation }) {
   const [tempLat, setTempLat] = useState('');
   const [tempLon, setTempLon] = useState('');
   
+  // Location search state (matching CameraScreen)
+  const [locQuery, setLocQuery] = useState('');
+  const [locResults, setLocResults] = useState([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchDone, setSearchDone] = useState(false);
+  const [showManualCoords, setShowManualCoords] = useState(false);
+  const [editAddr, setEditAddr] = useState('');
+  
   const scrollRef = useRef(null);
+
+  const getHiddenAssetIds = async () => {
+    try {
+      const val = await AsyncStorage.getItem('geoSnapHiddenAssets');
+      return val ? JSON.parse(val) : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const addHiddenAssetIds = async (idsOrUris) => {
+    try {
+      const existing = await getHiddenAssetIds();
+      const updated = Array.from(new Set([...existing, ...idsOrUris]));
+      await AsyncStorage.setItem('geoSnapHiddenAssets', JSON.stringify(updated));
+    } catch {}
+  };
 
   useEffect(() => {
     AsyncStorage.getItem('geoSnapLocationOverrides').then(val => {
@@ -135,12 +204,37 @@ export default function GalleryScreen({ navigation }) {
       if (!album) { setPhotos([]); setSections([]); setLoading(false); return; }
       const result = await MediaLibrary.getAssetsAsync({
         album,
-        mediaType: 'photo',
+        mediaType: [MediaLibrary.MediaType.photo, MediaLibrary.MediaType.video],
         sortBy: [[MediaLibrary.SortBy.creationTime, false]],
         first: 150,
       });
-      setPhotos(result.assets);
-      setSections(groupPhotosByDate(result.assets));
+
+      const hiddenIds = await getHiddenAssetIds();
+      const hiddenSet = new Set(hiddenIds);
+
+      // Filter out assets deleted or hidden from app gallery
+      const validAssets = (await Promise.all(
+        result.assets.map(async (asset) => {
+          if (hiddenSet.has(asset.id) || hiddenSet.has(asset.uri)) return null;
+          try {
+            const info = await FileSystem.getInfoAsync(asset.uri);
+            if (info && info.exists) return asset;
+            return null;
+          } catch {
+            return asset;
+          }
+        })
+      )).filter(Boolean);
+
+      // Sort newest first (newest photo/video at top, mixed together)
+      validAssets.sort((a, b) => {
+        const timeA = Number(a.creationTime || a.modificationTime || 0);
+        const timeB = Number(b.creationTime || b.modificationTime || 0);
+        return timeB - timeA;
+      });
+
+      setPhotos(validAssets);
+      setSections(groupPhotosByDate(validAssets));
     } catch (err) {
       console.error('Gallery load error:', err);
     } finally {
@@ -149,29 +243,45 @@ export default function GalleryScreen({ navigation }) {
   };
 
   const deletePhoto = async (photo) => {
-    showAlert('Delete Photo', 'Remove this photo from your GeoSnap gallery?', [
+    showAlert('Delete Item', 'Remove this item from your GeoSnap gallery?', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: async () => {
         try {
-          await MediaLibrary.deleteAssetsAsync([photo]);
+          await addHiddenAssetIds([photo.id, photo.uri]);
+          try { await FileSystem.deleteAsync(photo.uri, { idempotent: true }); } catch {}
           setSelected(null);
           loadPhotos();
-        } catch { showAlert('Error', 'Could not delete photo.'); }
+          showToast('Deleted item');
+        } catch { showAlert('Error', 'Could not delete item.'); }
       }},
     ]);
   };
 
   const deleteSelected = async () => {
     if (selectedPhotos.length === 0) return;
-    showAlert('Delete Photos', `Delete ${selectedPhotos.length} selected photos?`, [
+    showAlert('Delete Items', `Delete ${selectedPhotos.length} selected items?`, [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: async () => {
         try {
-          await MediaLibrary.deleteAssetsAsync(selectedPhotos);
+          const idsAndUris = [];
+          for (const item of selectedPhotos) {
+            if (typeof item === 'string') {
+              idsAndUris.push(item);
+              try { await FileSystem.deleteAsync(item, { idempotent: true }); } catch {}
+            } else if (item?.id || item?.uri) {
+              if (item.id) idsAndUris.push(item.id);
+              if (item.uri) {
+                idsAndUris.push(item.uri);
+                try { await FileSystem.deleteAsync(item.uri, { idempotent: true }); } catch {}
+              }
+            }
+          }
+          await addHiddenAssetIds(idsAndUris);
           cancelSelection();
           loadPhotos();
+          showToast('Deleted selected items');
         } catch (err) {
-          showAlert('Error', 'Failed to delete photos: ' + err.message);
+          showAlert('Error', 'Failed to delete: ' + err.message);
         }
       }}
     ]);
@@ -252,9 +362,7 @@ export default function GalleryScreen({ navigation }) {
     setEditLocationVisible(false);
     
     const newOverrides = { ...locationOverrides, [selected.id]: { lat, lon } };
-    setLocationOverrides(newOverrides);
-    await AsyncStorage.setItem('geoSnapLocationOverrides', JSON.stringify(newOverrides));
-
+    
     try {
       showToast('Processing EXIF...');
       const base64Data = await FileSystem.readAsStringAsync(selected.uri, { encoding: FileSystem.EncodingType.Base64 });
@@ -290,6 +398,14 @@ export default function GalleryScreen({ navigation }) {
       const album = await MediaLibrary.getAlbumAsync('GeoSnap');
       if (album) await MediaLibrary.addAssetsToAlbumAsync([newAsset], album, false);
 
+      // Copy the override coordinates to the new asset ID
+      const updatedOverrides = { ...newOverrides, [newAsset.id]: { lat, lon } };
+      if (overrideOriginal) {
+        delete updatedOverrides[selected.id];
+      }
+      setLocationOverrides(updatedOverrides);
+      await AsyncStorage.setItem('geoSnapLocationOverrides', JSON.stringify(updatedOverrides));
+
       if (overrideOriginal) {
         await MediaLibrary.deleteAssetsAsync([selected]);
       }
@@ -301,6 +417,62 @@ export default function GalleryScreen({ navigation }) {
       console.error(err);
       showAlert('EXIF Error', 'App logic updated, but physical EXIF rewrite failed: ' + err.message);
     }
+  };
+
+  // ============== LOCATION SEARCH (Nominatim) ==============
+  const getFlagEmoji = (countryCode) => {
+    if (!countryCode) return '';
+    const codePoints = countryCode.toUpperCase().split('').map(char => 127397 + char.charCodeAt());
+    return String.fromCodePoint(...codePoints);
+  };
+
+  const searchLocation = async () => {
+    const q = locQuery.trim();
+    if (!q) return;
+    setIsSearching(true);
+    setSearchDone(false);
+    setLocResults([]);
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=6&addressdetails=1`,
+        { headers: { 'User-Agent': 'GeoSnapApp/2.0' } }
+      );
+      const data = await res.json();
+      setLocResults(data);
+    } catch {
+      setLocResults([]);
+    } finally {
+      setIsSearching(false);
+      setSearchDone(true);
+    }
+  };
+
+  const selectSearchResult = (result) => {
+    const lat = parseFloat(result.lat);
+    const lon = parseFloat(result.lon);
+    setTempLat(lat.toFixed(6));
+    setTempLon(lon.toFixed(6));
+    const countryCode = result.address?.country_code;
+    const flag = getFlagEmoji(countryCode);
+    const name = result.display_name.split(',').slice(0, 3).join(',').trim() + (flag ? ` ${flag}` : '');
+    setEditAddr(name);
+    // Auto-save the location immediately after selecting
+    setLocResults([]);
+    setLocQuery('');
+  };
+
+  const openEditGpsModal = () => {
+    const currentOverride = locationOverrides[selected.id];
+    const defaultLat = currentOverride ? currentOverride.lat : (selectedInfo?.location?.latitude || '');
+    const defaultLon = currentOverride ? currentOverride.lon : (selectedInfo?.location?.longitude || '');
+    setTempLat(defaultLat.toString());
+    setTempLon(defaultLon.toString());
+    setEditAddr('');
+    setLocQuery('');
+    setLocResults([]);
+    setSearchDone(false);
+    setShowManualCoords(false);
+    setEditLocationVisible(true);
   };
 
   const copyGPS = async (photo) => {
@@ -526,36 +698,41 @@ export default function GalleryScreen({ navigation }) {
                 <Text style={{ fontSize: 17, fontWeight: '700', color: '#FFF' }}>Photo</Text>
               </View>
 
-              {/* Full screen Image Viewer (Occupies remaining space safely) */}
+              {/* Full screen Image or Video Viewer */}
               <View style={{ flex: 1, overflow: 'hidden' }}>
-                <ScrollView 
-                  contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
-                  maximumZoomScale={3}
-                  minimumZoomScale={1}
-                  showsHorizontalScrollIndicator={false}
-                  showsVerticalScrollIndicator={false}
-                >
-                  <Image 
-                    source={{ uri: selected.uri }} 
-                    style={{ flex: 1, width: '100%', minHeight: 400 }} 
-                    resizeMode="contain" 
+                {(selected.mediaType === 'video' || selected.uri?.endsWith('.mp4') || selected.filename?.endsWith('.mp4')) ? (
+                  <VideoPlayerView
+                    videoUri={selected.uri}
+                    location={(() => {
+                      const override = locationOverrides[selected.id];
+                      const lat = override ? override.lat : selectedInfo?.location?.latitude;
+                      const lon = override ? override.lon : selectedInfo?.location?.longitude;
+                      return (lat && lon) ? { coords: { latitude: lat, longitude: lon } } : null;
+                    })()}
+                    address="GeoSnap Video Location"
                   />
-                </ScrollView>
+                ) : (
+                  <ScrollView 
+                    contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
+                    maximumZoomScale={3}
+                    minimumZoomScale={1}
+                    showsHorizontalScrollIndicator={false}
+                    showsVerticalScrollIndicator={false}
+                  >
+                    <Image 
+                      source={{ uri: selected.uri }} 
+                      style={{ flex: 1, width: '100%', minHeight: 400 }} 
+                      resizeMode="contain" 
+                    />
+                  </ScrollView>
+                )}
               </View>
 
               {/* Bottom Actions Navigation Bar */}
-              <View style={{ backgroundColor: '#0B1220', paddingVertical: 16, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.1)' }}>
+              <View style={{ backgroundColor: '#0B1220', paddingVertical: 16, paddingBottom: Math.max(insets.bottom, 16), borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.1)' }}>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, gap: 16 }}>
                   <ActionBtn icon="share-social-outline" label="Share" color="#FFF" onPress={() => sharePhoto(selected)} />
                   <ActionBtn icon="information-circle-outline" label="Details" color="#FFF" onPress={() => setShowDetails(true)} />
-                  <ActionBtn icon="location-outline" label="Edit GPS" color="#FFF" onPress={() => {
-                    const currentOverride = locationOverrides[selected.id];
-                    const defaultLat = currentOverride ? currentOverride.lat : (selectedInfo?.location?.latitude || '');
-                    const defaultLon = currentOverride ? currentOverride.lon : (selectedInfo?.location?.longitude || '');
-                    setTempLat(defaultLat.toString());
-                    setTempLon(defaultLon.toString());
-                    setEditLocationVisible(true);
-                  }} />
                   <ActionBtn icon="copy-outline" label="Copy GPS" color="#FFF" onPress={() => copyGPS(selected)} />
                   <ActionBtn icon="trash-outline" label="Delete" color="#FF6B6B" onPress={() => { setSelected(null); deletePhoto(selected); }} />
                 </ScrollView>
@@ -598,45 +775,158 @@ export default function GalleryScreen({ navigation }) {
                 </View>
               </Modal>
 
-              {/* Edit GPS Modal */}
-              <Modal visible={editLocationVisible} transparent={true} animationType="fade" onRequestClose={() => setEditLocationVisible(false)}>
-                <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center' }}>
-                  <View style={{ backgroundColor: T.surface2, width: '80%', borderRadius: 20, padding: 24 }}>
-                    <Text style={{ color: T.text, fontSize: 18, fontWeight: '700', marginBottom: 16 }}>Edit GPS Coordinates</Text>
-                    
-                    <Text style={{ color: T.textMuted, fontSize: 12, marginBottom: 4 }}>Latitude</Text>
-                    <TextInput 
-                      style={{ backgroundColor: T.bg, color: T.text, padding: 12, borderRadius: 8, marginBottom: 16 }}
-                      keyboardType="numeric"
-                      value={tempLat}
-                      onChangeText={setTempLat}
-                      placeholder="e.g. 40.7128"
-                      placeholderTextColor={T.textMuted}
-                    />
-
-                    <Text style={{ color: T.textMuted, fontSize: 12, marginBottom: 4 }}>Longitude</Text>
-                    <TextInput 
-                      style={{ backgroundColor: T.bg, color: T.text, padding: 12, borderRadius: 8, marginBottom: 24 }}
-                      keyboardType="numeric"
-                      value={tempLon}
-                      onChangeText={setTempLon}
-                      placeholder="e.g. -74.0060"
-                      placeholderTextColor={T.textMuted}
-                    />
-
-                    <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12 }}>
-                      <TouchableOpacity onPress={() => setEditLocationVisible(false)} style={{ padding: 12 }}>
-                        <Text style={{ color: T.textMuted, fontWeight: '600' }}>Cancel</Text>
+              {/* Edit GPS Modal — Full Search (matching CameraScreen) */}
+              <Modal visible={editLocationVisible} transparent animationType="slide" onRequestClose={() => setEditLocationVisible(false)}>
+                <KeyboardAvoidingView
+                  behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                  style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' }}
+                >
+                  <View style={{ backgroundColor: T.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, gap: 6, maxHeight: '85%' }}>
+                    {/* Header */}
+                    <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 8 }}>
+                      <View>
+                        <Text style={{ fontSize: 18, fontWeight: '800', color: T.text }}>Set Location</Text>
+                        <Text style={{ fontSize: 12, marginTop: 2, color: T.textMuted }}>Search or enter manually</Text>
+                      </View>
+                      <TouchableOpacity onPress={() => setEditLocationVisible(false)} style={{ width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' }}>
+                        <Ionicons name="close" size={20} color={T.textSub} />
                       </TouchableOpacity>
-                      <TouchableOpacity onPress={() => saveLocation(false)} style={{ backgroundColor: 'rgba(255,255,255,0.1)', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 8 }}>
-                        <Text style={{ color: T.text, fontWeight: '700' }}>Save Copy</Text>
+                    </View>
+
+                    {/* Search bar */}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 8, marginBottom: 4, backgroundColor: T.surface2, borderColor: T.border }}>
+                      <Ionicons name="search-outline" size={18} color={T.textMuted} />
+                      <TextInput
+                        style={{ flex: 1, fontSize: 15, paddingVertical: 2, color: T.text }}
+                        value={locQuery}
+                        onChangeText={setLocQuery}
+                        placeholder="Search city, landmark, address…"
+                        placeholderTextColor={T.textMuted}
+                        returnKeyType="search"
+                        onSubmitEditing={searchLocation}
+                        autoFocus
+                      />
+                      {isSearching
+                        ? <ActivityIndicator size="small" color={T.accent} />
+                        : (
+                          <TouchableOpacity onPress={searchLocation} disabled={!locQuery.trim()}>
+                            <Ionicons name="arrow-forward-circle" size={26} color={locQuery.trim() ? T.accent : T.border} />
+                          </TouchableOpacity>
+                        )
+                      }
+                    </View>
+
+                    {/* Search results */}
+                    {locResults.length > 0 && (
+                      <ScrollView style={{ maxHeight: 240 }} keyboardShouldPersistTaps="handled">
+                        {locResults.map((r, i) => {
+                          const parts = r.display_name.split(',');
+                          const primary = parts.slice(0, 2).join(',').trim();
+                          const secondary = parts.slice(2, 4).join(',').trim();
+                          return (
+                            <TouchableOpacity
+                              key={r.place_id}
+                              style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, borderBottomWidth: i === locResults.length - 1 ? 0 : StyleSheet.hairlineWidth, borderBottomColor: T.border }}
+                              onPress={() => selectSearchResult(r)}
+                              activeOpacity={0.7}
+                            >
+                              <View style={{ width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: T.accent + '20' }}>
+                                <Ionicons name="location" size={14} color={T.accent} />
+                              </View>
+                              <View style={{ flex: 1 }}>
+                                <Text style={{ fontSize: 14, fontWeight: '600', color: T.text }} numberOfLines={1}>{primary}</Text>
+                                <Text style={{ fontSize: 11, marginTop: 1, color: T.textMuted }} numberOfLines={1}>{secondary}</Text>
+                                <Text style={{ fontSize: 10, fontFamily: Platform.OS === 'ios' ? 'Courier New' : 'monospace', marginTop: 2, color: T.textSub }}>
+                                  {parseFloat(r.lat).toFixed(5)}, {parseFloat(r.lon).toFixed(5)}
+                                </Text>
+                              </View>
+                              <Ionicons name="chevron-forward" size={16} color={T.textMuted} />
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </ScrollView>
+                    )}
+
+                    {/* No results state */}
+                    {searchDone && locResults.length === 0 && (
+                      <View style={{ alignItems: 'center', paddingVertical: 16, gap: 4 }}>
+                        <Ionicons name="location-outline" size={32} color={T.textMuted} />
+                        <Text style={{ fontSize: 14, fontWeight: '600', color: T.textMuted }}>No locations found</Text>
+                        <Text style={{ fontSize: 12, textAlign: 'center', lineHeight: 18, color: T.textMuted }}>Try a different search, or enter coordinates manually below.</Text>
+                      </View>
+                    )}
+
+                    {/* Selected Location Confirmation */}
+                    {editAddr ? (
+                      <View style={{ backgroundColor: T.accent + '15', padding: 12, borderRadius: 10, marginVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                        <Ionicons name="location" size={16} color={T.accent} />
+                        <Text style={{ color: T.text, fontSize: 13, flex: 1, fontWeight: '600' }} numberOfLines={1}>
+                          Selected: {editAddr} ({parseFloat(tempLat).toFixed(4)}, {parseFloat(tempLon).toFixed(4)})
+                        </Text>
+                      </View>
+                    ) : null}
+
+                    {/* Manual coords toggle */}
+                    <TouchableOpacity
+                      style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 10 }}
+                      onPress={() => setShowManualCoords(p => !p)}
+                    >
+                      <Ionicons name={showManualCoords ? 'chevron-up' : 'chevron-down'} size={14} color={T.textMuted} />
+                      <Text style={{ fontSize: 12, fontWeight: '500', color: T.textMuted }}>Enter coordinates manually</Text>
+                    </TouchableOpacity>
+
+                    {showManualCoords && (
+                      <View style={{ gap: 4 }}>
+                        <View style={{ flexDirection: 'row', gap: 8 }}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ fontSize: 11, fontWeight: '600', marginTop: 6, marginBottom: 3, letterSpacing: 0.5, color: T.textSub }}>Latitude</Text>
+                            <TextInput
+                              style={{ borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, backgroundColor: T.surface2, borderColor: T.border, color: T.text }}
+                              value={tempLat}
+                              onChangeText={setTempLat}
+                              placeholder="12.971599"
+                              placeholderTextColor={T.textMuted}
+                              keyboardType="numeric"
+                            />
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ fontSize: 11, fontWeight: '600', marginTop: 6, marginBottom: 3, letterSpacing: 0.5, color: T.textSub }}>Longitude</Text>
+                            <TextInput
+                              style={{ borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, backgroundColor: T.surface2, borderColor: T.border, color: T.text }}
+                              value={tempLon}
+                              onChangeText={setTempLon}
+                              placeholder="77.594566"
+                              placeholderTextColor={T.textMuted}
+                              keyboardType="numeric"
+                            />
+                          </View>
+                        </View>
+                      </View>
+                    )}
+
+                    {/* Action buttons */}
+                    <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
+                      <TouchableOpacity
+                        style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 13, paddingHorizontal: 16, borderRadius: 12, borderWidth: 1, backgroundColor: T.surface2, borderColor: T.border }}
+                        onPress={() => setEditLocationVisible(false)}
+                      >
+                        <Text style={{ fontSize: 14, fontWeight: '700', color: T.textMuted }}>Cancel</Text>
                       </TouchableOpacity>
-                      <TouchableOpacity onPress={() => saveLocation(true)} style={{ backgroundColor: T.accent, paddingVertical: 12, paddingHorizontal: 16, borderRadius: 8 }}>
-                        <Text style={{ color: '#FFF', fontWeight: '700' }}>Override</Text>
+                      <TouchableOpacity
+                        style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 13, paddingHorizontal: 16, borderRadius: 12, borderWidth: 1, backgroundColor: 'rgba(255,255,255,0.1)', borderColor: T.border }}
+                        onPress={() => saveLocation(false)}
+                      >
+                        <Text style={{ fontSize: 14, fontWeight: '700', color: T.text }}>Save Copy</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 13, paddingHorizontal: 16, borderRadius: 12, borderWidth: 1, backgroundColor: T.accent, borderColor: T.accent }}
+                        onPress={() => saveLocation(true)}
+                      >
+                        <Text style={{ fontSize: 14, fontWeight: '700', color: T.mode === 'dark' ? '#000' : '#FFF' }}>Override</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
-                </View>
+                </KeyboardAvoidingView>
               </Modal>
             </SafeAreaView>
           )}

@@ -1,12 +1,18 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet, Animated, Platform, TouchableOpacity, Linking, Image } from 'react-native';
+import { View, Text, StyleSheet, Animated, Platform, TouchableOpacity, Linking, Image, Dimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { getMapStyle } from '../screens/SettingsScreen';
 import { useTheme } from '../context/ThemeContext';
 
 
+const { height: SCREEN_H } = Dimensions.get('window');
+const isSmallScreen = SCREEN_H < 700;
+
 export default function GpsOverlay({ location, address, forCapture = false, captureTime = null }) {
-  const { theme: T, stampPosition, stampMapSize, horizontalMode, watermarkEnabled } = useTheme();
+  const {
+    theme: T, stampPosition, stampMapSize, horizontalMode, watermarkEnabled,
+    showLocation = true, showFlag = true, showLatLong = true, showDate = false
+  } = useTheme();
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(16)).current;
   // Live clock — always synced to system time; frozen only on capture
@@ -50,49 +56,22 @@ export default function GpsOverlay({ location, address, forCapture = false, capt
   const openGoogleMaps = () => {
     if (!location) return;
     const { latitude, longitude } = location.coords;
-    const url = `geo:${latitude},${longitude}?q=${latitude},${longitude}(GeoSnap+Photo)`;
-    const webUrl = `https://maps.google.com/?q=${latitude},${longitude}`;
-    Linking.canOpenURL(url)
-      .then(supported => Linking.openURL(supported ? url : webUrl))
-      .catch(() => Linking.openURL(webUrl));
+    const url = `https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`;
+    Linking.openURL(url).catch(() => {});
   };
-
-  // --- Free map tile providers (no API key needed) ---
-  const latLonToTile = (lat, lon, zoom) => {
-    const x = Math.floor((lon + 180) / 360 * Math.pow(2, zoom));
-    const latRad = (lat * Math.PI) / 180;
-    const y = Math.floor(
-      (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * Math.pow(2, zoom)
-    );
-    return { x, y, z: zoom };
-  };
-
-  const getMapTileUrl = (lat, lon, style) => {
-    const zoom = 15;
-    const { x, y, z } = latLonToTile(lat, lon, zoom);
-    switch (style) {
-      case 'satellite':
-      case 'hybrid':
-        return `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`;
-      case 'terrain':
-        return `https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/${z}/${y}/${x}`;
-      case 'roadmap':
-      default:
-        return `https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/${z}/${y}/${x}`;
-    }
-  };
-
-  const mapTileUrl = location
-    ? getMapTileUrl(location.coords.latitude, location.coords.longitude, getMapStyle())
-    : null;
 
   const lat = location?.coords?.latitude;
   const lon = location?.coords?.longitude;
-
   const isTop = stampPosition === 'top';
 
-  // Dynamic Map Size Styles
-  let thumbSize = 68;
+  // Map tile URL using Satellite Mode (l=sat)
+  const mapStyleType = getMapStyle();
+  const zoom = 15;
+  const mapTileUrl = (lat && lon)
+    ? `https://static-maps.yandex.ru/1.x/?lang=en_US&l=sat&ll=${lon},${lat}&z=15&size=200,200`
+    : null;
+
+  let thumbSize = 64;
   let cityFs = 13;
   let addrFs = 9.5;
   let dmsFs = 8.5;
@@ -119,20 +98,29 @@ export default function GpsOverlay({ location, address, forCapture = false, capt
         {
           opacity: fadeAnim,
           transform: [{ translateY: slideAnim }],
-          justifyContent: isTop ? 'flex-start' : 'flex-end',
+          justifyContent: 'flex-end',
           paddingTop: 10,
-          paddingBottom: forCapture ? 10 : 180,
+          paddingBottom: forCapture ? 6 : (isSmallScreen ? 140 : 170),
         }
       ]}
       pointerEvents={forCapture ? 'none' : 'box-none'}
     >
 
-      {/* Bottom: GPS Info Panel (matching reference image style) */}
+      {/* Bottom: GPS Info Panel */}
       <View style={[
         styles.gpsPanel, 
-        forCapture && { backgroundColor: 'rgba(255,255,255,0.75)' },
+        forCapture ? { backgroundColor: 'rgba(255, 255, 255, 0.88)', borderColor: 'rgba(0, 0, 0, 0.15)' } : { backgroundColor: 'rgba(255, 255, 255, 0.95)' },
         horizontalMode && { transform: [{ rotate: '90deg' }, { translateX: 50 }, { translateY: -50 }] }
       ]}>
+        {/* App Logo & Watermark Brand Header inside GPS Card (rendered on captured image) */}
+        {forCapture && watermarkEnabled && (
+          <View style={styles.brandRow}>
+            <Image source={require('../../assets/icon.png')} style={styles.brandLogo} />
+            <Text style={styles.brandName}>GeoSnap</Text>
+            <View style={styles.brandDivider} />
+            <Text style={styles.brandTag}>GPS CAMERA</Text>
+          </View>
+        )}
         
         {/* Main content row: Map thumbnail + Info */}
         <View style={styles.mainRow}>
@@ -183,44 +171,38 @@ export default function GpsOverlay({ location, address, forCapture = false, capt
           {/* Info column */}
           <View style={styles.infoCol}>
             {/* City / Address */}
-            {address ? (
-              <Text style={[styles.cityText, { fontSize: cityFs }]} numberOfLines={1}>{address}</Text>
-            ) : (
-              <Text style={[styles.cityText, { fontSize: cityFs }]}>Locating...</Text>
+            {showLocation && (
+              address ? (
+                <Text style={[styles.cityText, { fontSize: cityFs }]} numberOfLines={1}>{address}</Text>
+              ) : (
+                <Text style={[styles.cityText, { fontSize: cityFs }]}>Locating...</Text>
+              )
             )}
 
             {/* Full address line */}
-            {location && (
+            {showLatLong && location && (
               <Text style={[styles.addressText, { fontSize: addrFs, lineHeight: addrFs + 3.5 }]} numberOfLines={2}>
                 Lat {lat?.toFixed(6)}, Long {lon?.toFixed(6)}
               </Text>
             )}
 
             {/* DMS Coordinates */}
-            {location && (
+            {showLatLong && location && (
               <Text style={[styles.dmsText, { fontSize: dmsFs }]} numberOfLines={1}>
                 {formatCoord(lat, 'lat')}  {formatCoord(lon, 'lon')}
               </Text>
             )}
 
-            {/* Date/Day/Time row */}
-            <Text style={[styles.metaText, { fontSize: metaFs }]}>
-              {dayStr}, {dateStr} {timeStr}
-            </Text>
+            {/* Optional Date & Time line */}
+            {showDate && (
+              <Text style={[styles.metaText, { fontSize: metaFs }]} numberOfLines={1}>
+                {dayStr}, {dateStr} {timeStr}
+              </Text>
+            )}
 
           </View>
         </View>
       </View>
-
-      {/* Watermark brand row (bottom right corner) */}
-      {forCapture && watermarkEnabled && (
-        <View style={{ position: 'absolute', bottom: 10, right: 15 }}>
-          <Image 
-            source={require('../../assets/icon.png')} 
-            style={{ width: 80, height: 80, resizeMode: 'contain', opacity: 0.9 }} 
-          />
-        </View>
-      )}
     </Animated.View>
   );
 }
@@ -271,17 +253,33 @@ const styles = StyleSheet.create({
   brandRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    marginBottom: 7,
-    paddingBottom: 6,
+    gap: 6,
+    marginBottom: 5,
+    paddingBottom: 4,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: 'rgba(0,0,0,0.1)',
+    borderBottomColor: 'rgba(0,0,0,0.12)',
   },
-  brandText: {
+  brandLogo: {
+    width: 16,
+    height: 16,
+    borderRadius: 4,
+  },
+  brandName: {
+    color: '#1877F2',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  brandDivider: {
+    width: 1,
+    height: 10,
+    backgroundColor: 'rgba(0,0,0,0.18)',
+  },
+  brandTag: {
     color: '#555577',
-    fontSize: 10,
-    fontWeight: '600',
-    letterSpacing: 0.3,
+    fontSize: 8,
+    fontWeight: '700',
+    letterSpacing: 0.8,
   },
   mainRow: {
     flexDirection: 'row',

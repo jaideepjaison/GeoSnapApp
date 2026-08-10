@@ -1,10 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { NavigationContainer, DefaultTheme, DarkTheme } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Animated, Dimensions, Vibration } from 'react-native';
 import { BlurView } from 'expo-blur';
 
 import CameraScreen from './src/screens/CameraScreen';
@@ -16,79 +16,139 @@ import { AlertProvider } from './src/context/AlertContext';
 import { CameraProvider, useCameraContext } from './src/context/CameraContext';
 
 const Tab = createBottomTabNavigator();
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
-function AppTabs() {
+function ModernTabBar({ state, descriptors, navigation }) {
   const { theme: T } = useTheme();
+  const { isPreview } = useCameraContext();
   const insets = useSafeAreaInsets();
-  const { capture } = useCameraContext();
+  const isDark = T?.mode === 'dark';
+  const accentColor = T?.accent || '#1877F2';
 
-  const navTheme = {
-    ...(T.mode === 'dark' ? DarkTheme : DefaultTheme),
-    colors: {
-      ...(T.mode === 'dark' ? DarkTheme.colors : DefaultTheme.colors),
-      background: T.bg, card: T.surface, border: T.border, text: T.text,
-    },
-  };
+  if (isPreview) return null;
 
-  const TABS = {
-    Camera:   { icon: 'camera',   outline: 'camera-outline' },
-    Gallery:  { icon: 'images',   outline: 'images-outline' },
-    Settings: { icon: 'settings', outline: 'settings-outline' },
+  // 16px padding on each side -> total width = SCREEN_WIDTH - 32
+  const dockWidth = SCREEN_WIDTH - 32;
+  const tabWidth = dockWidth / 3;
+  const sliderTranslateX = useRef(new Animated.Value(state.index * tabWidth)).current;
+  const sliderScaleX = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.spring(sliderTranslateX, {
+        toValue: state.index * tabWidth,
+        tension: 100,
+        friction: 11,
+        useNativeDriver: true,
+      }),
+      Animated.sequence([
+        Animated.timing(sliderScaleX, { toValue: 1.12, duration: 110, useNativeDriver: true }),
+        Animated.spring(sliderScaleX, { toValue: 1.0, tension: 120, friction: 8, useNativeDriver: true }),
+      ])
+    ]).start();
+  }, [state.index]);
+
+  const TABS_CONFIG = {
+    Camera:   { label: 'Camera',   icon: 'aperture',   outline: 'aperture-outline' },
+    Gallery:  { label: 'Gallery',  icon: 'albums',     outline: 'albums-outline' },
+    Settings: { label: 'Settings', icon: 'options',    outline: 'options-outline' },
   };
 
   return (
-    <NavigationContainer theme={navTheme} key={T.mode}>
-      <StatusBar style={T.mode === 'dark' ? 'light' : 'dark'} />
+    <View style={[styles.navDockWrap, { bottom: Math.max(insets.bottom + 6, 16) }]}>
+      <BlurView
+        intensity={isDark ? 88 : 96}
+        tint={isDark ? 'dark' : 'light'}
+        style={[
+          styles.navDockContainer,
+          {
+            backgroundColor: isDark ? 'rgba(15, 23, 42, 0.88)' : 'rgba(255, 255, 255, 0.88)',
+            borderColor: isDark ? 'rgba(255, 255, 255, 0.14)' : 'rgba(255, 255, 255, 0.95)',
+          }
+        ]}
+      >
+        {/* Animated Active Pill Slider */}
+        <Animated.View
+          style={[
+            styles.activeSliderPill,
+            {
+              width: tabWidth - 12,
+              backgroundColor: isDark ? 'rgba(24, 119, 242, 0.22)' : 'rgba(24, 119, 242, 0.14)',
+              borderColor: `${accentColor}40`,
+              transform: [{ translateX: sliderTranslateX }, { scaleX: sliderScaleX }],
+            }
+          ]}
+        />
+
+        {/* Tab Items */}
+        {state.routes.map((route, index) => {
+          const isFocused = state.index === index;
+          const config = TABS_CONFIG[route.name] || { label: route.name, icon: 'square', outline: 'square-outline' };
+
+          const onPress = () => {
+            const event = navigation.emit({
+              type: 'tabPress',
+              target: route.key,
+              canPreventDefault: true,
+            });
+
+            if (!isFocused && !event.defaultPrevented) {
+              try { Vibration.vibrate(30); } catch {}
+              navigation.navigate(route.name);
+            }
+          };
+
+          return (
+            <TouchableOpacity
+              key={route.key}
+              onPress={onPress}
+              activeOpacity={0.7}
+              style={styles.tabItem}
+            >
+              <Ionicons
+                name={isFocused ? config.icon : config.outline}
+                size={isFocused ? 22 : 20}
+                color={isFocused ? accentColor : (isDark ? '#7E8CA7' : '#64748B')}
+              />
+              <Text
+                style={[
+                  styles.tabLabel,
+                  {
+                    color: isFocused ? accentColor : (isDark ? '#7E8CA7' : '#64748B'),
+                    fontWeight: isFocused ? '800' : '600',
+                  }
+                ]}
+              >
+                {config.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </BlurView>
+    </View>
+  );
+}
+
+function AppTabs() {
+  const { theme: T } = useTheme();
+  const isDark = T?.mode === 'dark';
+  const navTheme = {
+    ...(isDark ? DarkTheme : DefaultTheme),
+    colors: {
+      ...(isDark ? DarkTheme.colors : DefaultTheme.colors),
+      background: T?.bg || '#0B1220', card: T?.surface || '#121D2E', border: T?.border || '#243352', text: T?.text || '#F0F2FF',
+    },
+  };
+
+  return (
+    <NavigationContainer theme={navTheme} key={T?.mode || 'dark'}>
+      <StatusBar style={isDark ? 'light' : 'dark'} />
       <Tab.Navigator
         initialRouteName="Camera"
-        screenOptions={({ route }) => ({
-          headerShown: false,
-          tabBarStyle: {
-            position: 'absolute',
-            bottom: Math.max(insets.bottom, 12),
-            left: 20,
-            right: 20,
-            height: 64,
-            borderRadius: 24,
-            borderTopWidth: 0,
-            elevation: 0,
-            backgroundColor: 'transparent',
-            shadowColor: '#000',
-            shadowOffset: { width: 0, height: 8 },
-            shadowOpacity: 0.15,
-            shadowRadius: 24,
-          },
-          tabBarBackground: () => (
-            <BlurView
-              intensity={T.mode === 'dark' ? 60 : 90}
-              tint={T.mode === 'dark' ? 'dark' : 'light'}
-              style={{
-                flex: 1, borderRadius: 24, overflow: 'hidden',
-                backgroundColor: T.mode === 'dark' ? 'rgba(18,29,46,0.75)' : 'rgba(255,255,255,0.7)',
-                borderWidth: 1,
-                borderColor: T.mode === 'dark' ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.8)',
-              }}
-            />
-          ),
-          tabBarActiveTintColor: T.accent,
-          tabBarInactiveTintColor: T.textMuted,
-          tabBarShowLabel: true,
-          tabBarLabelStyle: { fontSize: 10, fontWeight: '600', marginTop: -2, marginBottom: 6 },
-          tabBarIcon: ({ focused, color }) => {
-            const cfg = TABS[route.name];
-            return (
-              <View style={focused ? { shadowColor: T.accent, shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.6, shadowRadius: 8 } : undefined}>
-                <Ionicons name={focused ? cfg.icon : cfg.outline} size={22} color={color} />
-              </View>
-            );
-          },
-        })}
+        tabBar={(props) => <ModernTabBar {...props} />}
+        screenOptions={{ headerShown: false }}
       >
-        <Tab.Screen name="Camera" component={CameraScreen}
-          listeners={({ navigation }) => ({
-            tabPress: (e) => { if (navigation.isFocused()) { e.preventDefault(); capture(); } },
-          })}
-        />
+        <Tab.Screen name="Camera" component={CameraScreen} />
         <Tab.Screen name="Gallery" component={GalleryScreen} />
         <Tab.Screen name="Settings" component={SettingsScreen} />
       </Tab.Navigator>
@@ -119,3 +179,47 @@ export default function App() {
     </SafeAreaProvider>
   );
 }
+
+const styles = StyleSheet.create({
+  navDockWrap: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    height: 64,
+    borderRadius: 32,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.28,
+    shadowRadius: 20,
+    elevation: 16,
+    zIndex: 100,
+  },
+  navDockContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 32,
+    overflow: 'hidden',
+    borderWidth: 1.5,
+    position: 'relative',
+  },
+  activeSliderPill: {
+    position: 'absolute',
+    left: 6,
+    height: 52,
+    borderRadius: 26,
+    borderWidth: 1,
+  },
+  tabItem: {
+    flex: 1,
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 2,
+    gap: 3,
+  },
+  tabLabel: {
+    fontSize: 11,
+    letterSpacing: 0.3,
+  },
+});

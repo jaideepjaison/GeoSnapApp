@@ -2,17 +2,17 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Alert,
   ActivityIndicator, Animated, Platform, Dimensions,
-  Image, Linking, Clipboard,
+  Image, Linking, Clipboard, Vibration,
   Modal, TextInput, KeyboardAvoidingView, ScrollView as ScrollViewRN,
 } from 'react-native';
 import Slider from '@react-native-community/slider';
-import { CameraView, useCameraPermissions } from 'expo-camera';
+import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
 import * as FileSystem from 'expo-file-system';
-import Share from 'react-native-share';
+// Share handled via expo-sharing (opens native external share sheet)
 import * as Location from 'expo-location';
 import * as MediaLibrary from 'expo-media-library';
 import * as Sharing from 'expo-sharing';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { captureRef } from 'react-native-view-shot';
 import { useFocusEffect } from '@react-navigation/native';
@@ -22,7 +22,44 @@ import { useTheme } from '../context/ThemeContext';
 import { useAlert } from '../context/AlertContext';
 import { useCameraContext } from '../context/CameraContext';
 
-const { width: SCREEN_W } = Dimensions.get('window');
+let ExpoVideoModule = null;
+try {
+  ExpoVideoModule = require('expo-video');
+} catch (e) {
+  ExpoVideoModule = null;
+}
+
+function VideoPreviewPlayer({ videoUri }) {
+  if (ExpoVideoModule && ExpoVideoModule.useVideoPlayer && ExpoVideoModule.VideoView) {
+    const { useVideoPlayer, VideoView } = ExpoVideoModule;
+    const player = useVideoPlayer({ uri: videoUri }, p => {
+      p.loop = true;
+      p.play();
+    });
+
+    return (
+      <View style={StyleSheet.absoluteFill}>
+        <VideoView
+          style={{ width: '100%', height: '100%' }}
+          player={player}
+          allowsFullscreen
+          allowsPictureInPicture
+          nativeControls
+        />
+      </View>
+    );
+  }
+
+  return (
+    <View style={[StyleSheet.absoluteFill, { backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' }]}>
+      <Ionicons name="videocam" size={48} color="#FFF" />
+      <Text style={{ color: '#FFF', fontWeight: '700', marginTop: 8 }}>Recorded Video Preview</Text>
+    </View>
+  );
+}
+
+const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
+const isSmallScreen = SCREEN_H < 700;
 
 // R4: Track if media permission was already granted this install
 let _mediaPermGranted = false;
@@ -37,10 +74,14 @@ export default function CameraScreen({ route, navigation }) {
     return String.fromCodePoint(...codePoints);
   };
 
-  const { theme, gpsDeeplink, autoSave } = useTheme();
+  const { theme, gpsDeeplink, autoSave, muteAudio } = useTheme();
   const { showAlert, showToast } = useAlert();
   const { triggerCapture } = useCameraContext();
+  // Safe theme access
+  const T = theme || {};
+  const insets = useSafeAreaInsets();
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
+  const [micPermission, requestMicPermission] = useMicrophonePermissions();
   const [locationPermission, setLocationPermission] = useState(null);
   const [location, setLocation] = useState(null);
   const [address, setAddress] = useState(null);
@@ -54,7 +95,13 @@ export default function CameraScreen({ route, navigation }) {
   const [showShareModal, setShowShareModal] = useState(false);
   const [sharePhotoUri, setSharePhotoUri] = useState(null);
   const [shareCopied, setShareCopied] = useState(false);
-  const [isPreview, setIsPreview] = useState(false);
+  const { isPreview, setIsPreview } = useCameraContext();
+  const [isSaved, setIsSaved] = useState(false);
+  const [mode, setMode] = useState('photo'); // 'photo' | 'video'
+  const [isRecording, setIsRecording] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const [recordSeconds, setRecordSeconds] = useState(0);
+  const recordTimerRef = useRef(null);
   const [captureTime, setCaptureTime] = useState(null);
   // Manual location override
   const [manualLocation, setManualLocation] = useState(null);
@@ -83,6 +130,8 @@ export default function CameraScreen({ route, navigation }) {
   const cameraRef = useRef(null);
   const viewShotRef = useRef(null);
   const locationWatchRef = useRef(null);
+  const autoSaveTimerRef = useRef(null);
+  const isAutoSavingRef = useRef(false);
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const zoomHideTimer = useRef(null);
   // Focus ring animation
@@ -99,6 +148,11 @@ export default function CameraScreen({ route, navigation }) {
   const recentSavedPhotoScaleAnim = useRef(new Animated.Value(0)).current;
   // Share bottom sheet slide
   const shareSlideAnim = useRef(new Animated.Value(380)).current;
+  // Record red button blink animation
+  const recBlinkAnim = useRef(new Animated.Value(1)).current;
+  // Camera flip 180-degree rotation animation
+  const camRotateAnim = useRef(new Animated.Value(0)).current;
+  const camRotateVal = useRef(0);
 
   // Touch gesture refs for Exposure Swipe
   const touchStartY = useRef(0);
@@ -145,6 +199,40 @@ export default function CameraScreen({ route, navigation }) {
     }
   }, [triggerCapture]);
 
+  // Hide tab bar dynamically during image preview to prevent layout overlap
+  useEffect(() => {
+    const isDark = T?.mode === 'dark';
+    navigation.setOptions({
+      tabBarStyle: {
+        display: isPreview ? 'none' : 'flex',
+        position: 'absolute',
+        bottom: Math.max(insets.bottom + 6, 16),
+        left: 16,
+        right: 16,
+        height: 66,
+        borderRadius: 33,
+        borderTopWidth: 0,
+        elevation: 12,
+        backgroundColor: 'transparent',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: isDark ? 0.45 : 0.18,
+        shadowRadius: 20,
+      },
+      tabBarItemStyle: {
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingVertical: 6,
+      },
+      tabBarLabelStyle: {
+        fontSize: 10.5,
+        fontWeight: '700',
+        textAlign: 'center',
+        marginTop: 2,
+      },
+    });
+  }, [isPreview, navigation, insets, T?.mode]);
+
   // Request permissions on mount
   useEffect(() => {
     (async () => {
@@ -186,7 +274,6 @@ export default function CameraScreen({ route, navigation }) {
   }, [locationPermission]);
 
   const toggleFlash = () => setFlash(p => p === 'off' ? 'on' : p === 'on' ? 'auto' : 'off');
-  const toggleFacing = () => setFacing(p => p === 'back' ? 'front' : 'back');
 
   // Zoom levels — expo-camera CameraView accepts 0-1 float (0 = 1x, 1 = max)
   const ZOOM_LEVELS = [0, 0.15, 0.3];
@@ -261,6 +348,40 @@ export default function CameraScreen({ route, navigation }) {
     await takePicture();
   };
 
+  const processAutoSave = async () => {
+    if (isAutoSavingRef.current || !viewShotRef.current) return;
+    isAutoSavingRef.current = true;
+    try {
+      const uri = await captureRef(viewShotRef, { format: 'jpg', quality: 0.92 });
+      const asset = await MediaLibrary.createAssetAsync(uri);
+      let album = await MediaLibrary.getAlbumAsync('GeoSnap');
+      if (!album) {
+        await MediaLibrary.createAlbumAsync('GeoSnap', asset, true);
+      } else {
+        await MediaLibrary.addAssetsToAlbumAsync([asset], album, true);
+      }
+      setStampedImageUri(uri);
+      setRecentSavedPhoto(uri);
+      showToast('Auto-saved to GeoSnap');
+
+      recentSavedPhotoScaleAnim.setValue(0);
+      Animated.sequence([
+        Animated.spring(recentSavedPhotoScaleAnim, { toValue: 1.15, tension: 70, friction: 6, useNativeDriver: true }),
+        Animated.spring(recentSavedPhotoScaleAnim, { toValue: 1, tension: 70, friction: 8, useNativeDriver: true }),
+        Animated.delay(3500),
+        Animated.timing(recentSavedPhotoScaleAnim, { toValue: 0, duration: 400, useNativeDriver: true }),
+      ]).start(() => setRecentSavedPhoto(null));
+      setExposure(0);
+    } catch (err) {
+      console.log('Auto-save error:', err);
+    } finally {
+      setIsSaving(false);
+      isAutoSavingRef.current = false;
+      previewSlideAnim.setValue(80);
+      Animated.spring(previewSlideAnim, { toValue: 0, friction: 8, useNativeDriver: true }).start();
+    }
+  };
+
   const takePicture = async () => {
     if (!cameraRef.current || isSaving) return;
     try {
@@ -269,35 +390,82 @@ export default function CameraScreen({ route, navigation }) {
       const photo = await cameraRef.current.takePictureAsync({ quality: 0.92, exif: true });
       const captureDate = new Date();
       setCaptureTime(captureDate);
-
-      if (autoSave) {
-        if (!_mediaPermGranted) {
-          const p = await MediaLibrary.requestPermissionsAsync();
-          if (p.status !== 'granted') {
-            showAlert('Permission Required', 'Please grant Photos access to save.');
-            return;
-          }
-          _mediaPermGranted = true;
-        }
-
-        // Briefly show frame on screen for native click visual feedback
-        setCapturedPhoto(photo);
-        setIsPreview(true);
-        setIsSaving(true);
-
-        // Capture is triggered by the Image onLoad event to prevent black screens.
-      } else {
-        setCaptureTime(new Date());
-        setManualLocation(null);
-        setManualAddress(null);
-        setCapturedPhoto(photo);
-        setIsPreview(true);
-        // Animate preview controls sliding in
-        previewSlideAnim.setValue(80);
-        Animated.spring(previewSlideAnim, { toValue: 0, friction: 8, useNativeDriver: true }).start();
-      }
+      setManualLocation(null);
+      setManualAddress(null);
+      setCapturedPhoto(photo);
+      setIsPreview(true);
+      setIsSaved(false);
+      setIsSaving(false);
+      // Animate preview controls sliding in
+      previewSlideAnim.setValue(80);
+      Animated.spring(previewSlideAnim, { toValue: 0, friction: 8, useNativeDriver: true }).start();
     } catch (err) {
       showAlert('Error', 'Failed to take photo.');
+    }
+  };
+
+  const formatRecordTime = (secs) => {
+    const m = Math.floor(secs / 60).toString().padStart(2, '0');
+    const s = (secs % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
+  };
+
+  const toggleRecording = async () => {
+    if (!cameraRef.current) return;
+    if (isRecording) {
+      try {
+        Vibration.vibrate(120);
+        cameraRef.current.stopRecording();
+      } catch {}
+      setIsRecording(false);
+      setIsPaused(false);
+      if (recordTimerRef.current) clearInterval(recordTimerRef.current);
+    } else {
+      if (!micPermission?.granted) {
+        const p = await requestMicPermission();
+        if (!p.granted) {
+          showAlert('Permission Required', 'Microphone access is needed for video recording.');
+          return;
+        }
+      }
+      try {
+        Vibration.vibrate(100);
+        setIsRecording(true);
+        setIsPaused(false);
+        setRecordSeconds(0);
+
+        // Blinking pulse loop for red record button
+        recBlinkAnim.setValue(1);
+        Animated.loop(
+          Animated.sequence([
+            Animated.timing(recBlinkAnim, { toValue: 0.35, duration: 550, useNativeDriver: true }),
+            Animated.timing(recBlinkAnim, { toValue: 1.0, duration: 550, useNativeDriver: true }),
+          ])
+        ).start();
+
+        if (recordTimerRef.current) clearInterval(recordTimerRef.current);
+        recordTimerRef.current = setInterval(() => {
+          setRecordSeconds(prev => prev + 1);
+        }, 1000);
+
+        const video = await cameraRef.current.recordAsync({ maxDuration: 120 });
+        if (video?.uri) {
+          setCapturedPhoto({ uri: video.uri, isVideo: true });
+          setStampedImageUri(video.uri);
+          setCaptureTime(new Date());
+          setIsPreview(true);
+          setIsSaved(false);
+          previewSlideAnim.setValue(80);
+          Animated.spring(previewSlideAnim, { toValue: 0, friction: 8, useNativeDriver: true }).start();
+        }
+      } catch (err) {
+        console.log('Video error:', err);
+      } finally {
+        setIsRecording(false);
+        setIsPaused(false);
+        recBlinkAnim.stopAnimation();
+        if (recordTimerRef.current) clearInterval(recordTimerRef.current);
+      }
     }
   };
 
@@ -329,6 +497,62 @@ export default function CameraScreen({ route, navigation }) {
     } finally {
       setIsSaving(false);
     }
+  };
+
+  // Save edited photo with updated location stamp
+  const handleSaveEdited = async () => {
+    if (isSaving || !capturedPhoto) return;
+    setIsSaving(true);
+    try {
+      if (capturedPhoto.isVideo) {
+        const asset = await MediaLibrary.createAssetAsync(capturedPhoto.uri);
+        let album = await MediaLibrary.getAlbumAsync('GeoSnap');
+        if (!album) {
+          await MediaLibrary.createAlbumAsync('GeoSnap', asset, true);
+        } else {
+          await MediaLibrary.addAssetsToAlbumAsync([asset], album, true);
+        }
+        setStampedImageUri(capturedPhoto.uri);
+        setIsSaved(true);
+        showToast('Saved video to GeoSnap gallery!');
+      } else {
+        const uri = await captureRef(viewShotRef, { format: 'jpg', quality: 0.92 });
+        const asset = await MediaLibrary.createAssetAsync(uri);
+        let album = await MediaLibrary.getAlbumAsync('GeoSnap');
+        if (!album) {
+          await MediaLibrary.createAlbumAsync('GeoSnap', asset, true);
+        } else {
+          await MediaLibrary.addAssetsToAlbumAsync([asset], album, true);
+        }
+        setStampedImageUri(uri);
+        setRecentSavedPhoto(uri);
+        setIsSaved(true);
+        showToast('Saved photo to GeoSnap gallery!');
+
+        recentSavedPhotoScaleAnim.setValue(0);
+        Animated.sequence([
+          Animated.spring(recentSavedPhotoScaleAnim, { toValue: 1.15, tension: 70, friction: 6, useNativeDriver: true }),
+          Animated.spring(recentSavedPhotoScaleAnim, { toValue: 1, tension: 70, friction: 8, useNativeDriver: true }),
+          Animated.delay(3500),
+          Animated.timing(recentSavedPhotoScaleAnim, { toValue: 0, duration: 400, useNativeDriver: true }),
+        ]).start(() => setRecentSavedPhoto(null));
+      }
+    } catch (err) {
+      showAlert('Save Error', 'Failed to save: ' + err.message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const toggleFacing = () => {
+    camRotateVal.current += 180;
+    Animated.spring(camRotateAnim, {
+      toValue: camRotateVal.current,
+      friction: 6,
+      tension: 80,
+      useNativeDriver: true,
+    }).start();
+    setFacing(prev => prev === 'back' ? 'front' : 'back');
   };
 
   // ============== GPS SHARE MESSAGE ==============
@@ -381,19 +605,23 @@ export default function CameraScreen({ route, navigation }) {
   };
 
   const handleShareAutoSaved = async () => {
-    if (stampedImageUri) {
-      try {
-        await Share.open({ url: stampedImageUri, failOnCancel: false });
-      } catch (err) {
-        console.log(err);
-      }
+    // First save if not already saved
+    let uriToShare = stampedImageUri;
+    if (!uriToShare) {
+      uriToShare = await savePhoto();
+      if (!uriToShare) return;
+      showToast('Saved to GeoSnap');
     }
+    triggerShareModal(uriToShare);
   };
 
 
   const retake = () => {
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     setCapturedPhoto(null);
     setIsPreview(false);
+    setIsSaved(false);
+    setIsSaving(false);
     setCaptureTime(null);
     setManualLocation(null);
     setManualAddress(null);
@@ -458,9 +686,7 @@ export default function CameraScreen({ route, navigation }) {
   };
 
   const flashIcon = flash === 'off' ? 'flash-off' : flash === 'on' ? 'flash' : 'flash-outline';
-  const flashColor = flash !== 'off' ? theme.warn : theme.textMuted;
-
-  const T = theme; // shorthand
+  const flashColor = flash !== 'off' ? (T.warn || '#F59E0B') : (T.textMuted || '#8E90B0');
 
   if (!cameraPermission) {
     return <View style={[styles.centered, { backgroundColor: T.bg }]}>
@@ -483,15 +709,59 @@ export default function CameraScreen({ route, navigation }) {
 
   return (
     <View style={[styles.container, { backgroundColor: '#000' }]}>
-      {/* Header — Liquid Glass Circular Buttons: Flash | HDR | Grid | Settings */}
+      {/* Header — App Logo Top-Left | Recording Banner Center | Camera/Video Switcher Top-Right */}
       <SafeAreaView edges={['top']} style={styles.absoluteHeader}>
         <View style={styles.headerBar}>
+          {/* Top-Left: App Logo */}
+          <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)' }}>
+            <Image source={require('../../assets/icon.png')} style={{ width: 26, height: 26, borderRadius: 6 }} />
+          </View>
 
-          <TouchableOpacity style={styles.glassCircleBtn} onPress={() => setHdr(!hdr)}>
-            <Ionicons name={hdr ? 'contrast' : 'contrast-outline'} size={20} color={hdr ? T.accent : '#FFF'} />
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.glassCircleBtn} onPress={() => setGridOn(!gridOn)}>
-            <Ionicons name={gridOn ? 'grid' : 'grid-outline'} size={20} color={gridOn ? T.accent : '#FFF'} />
+          {/* Top-Center: Recording Timer & Pause/Play Control */}
+          {isRecording && (
+            <View style={styles.recBannerCard}>
+              <View style={[styles.recIndicatorDot, isPaused && { backgroundColor: '#F59E0B' }]} />
+              <Text style={styles.recTimerText}>
+                {isPaused ? 'PAUSED' : 'REC'}  {formatRecordTime(recordSeconds)}
+              </Text>
+              <TouchableOpacity 
+                style={styles.recPauseCircle}
+                onPress={() => {
+                  if (isPaused) {
+                    try { cameraRef.current?.resumeRecording(); } catch {}
+                    setIsPaused(false);
+                    Vibration.vibrate(50);
+                  } else {
+                    try { cameraRef.current?.pauseRecording(); } catch {}
+                    setIsPaused(true);
+                    Vibration.vibrate(50);
+                  }
+                }}
+              >
+                <Ionicons name={isPaused ? "play" : "pause"} size={14} color="#FFF" />
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Top-Right: Camera / Video Mode Switcher */}
+          <TouchableOpacity 
+            style={styles.glassCircleBtn} 
+            onPress={async () => {
+              if (mode === 'photo') {
+                if (!micPermission?.granted) await requestMicPermission();
+                setMode('video');
+              } else {
+                if (isRecording) {
+                  try { cameraRef.current?.stopRecording(); } catch {}
+                  setIsRecording(false);
+                  setIsPaused(false);
+                  if (recordTimerRef.current) clearInterval(recordTimerRef.current);
+                }
+                setMode('photo');
+              }
+            }}
+          >
+            <Ionicons name={mode === 'photo' ? 'videocam-outline' : 'camera-outline'} size={20} color="#FFF" />
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -506,43 +776,40 @@ export default function CameraScreen({ route, navigation }) {
         onTouchEnd={handleTouchEnd}
       >
         {isPreview && capturedPhoto ? (
-          <Image 
-            source={{ uri: capturedPhoto.uri }} 
-            style={StyleSheet.absoluteFill} 
-            resizeMode="cover" 
-            onLoad={() => {
-              if (isSaving && autoSave) {
-                // Wait briefly for native UI render cycle
-                setTimeout(async () => {
-                  try {
-                    const uri = await captureRef(viewShotRef, { format: 'jpg', quality: 0.92 });
-                    const asset = await MediaLibrary.createAssetAsync(uri);
-                    let album = await MediaLibrary.getAlbumAsync('GeoSnap');
-                    if (!album) {
-                      await MediaLibrary.createAlbumAsync('GeoSnap', asset, true);
-                    } else {
-                      await MediaLibrary.addAssetsToAlbumAsync([asset], album, true);
-                    }
-                    setStampedImageUri(uri);
-                    
-                    setRecentSavedPhoto(uri);
-                    recentSavedPhotoScaleAnim.setValue(0);
-                    Animated.sequence([
-                      Animated.spring(recentSavedPhotoScaleAnim, { toValue: 1.15, tension: 70, friction: 6, useNativeDriver: true }),
-                      Animated.spring(recentSavedPhotoScaleAnim, { toValue: 1, tension: 70, friction: 8, useNativeDriver: true }),
-                      Animated.delay(3500),
-                      Animated.timing(recentSavedPhotoScaleAnim, { toValue: 0, duration: 400, useNativeDriver: true }),
-                    ]).start(() => setRecentSavedPhoto(null));
-                    setExposure(0);
-                  } catch (err) {
-                    showAlert('Error', 'Failed to auto-save: ' + err.message);
-                  } finally {
-                    setIsSaving(false);
+          <>
+            {capturedPhoto.isVideo ? (
+              <VideoPreviewPlayer videoUri={capturedPhoto.uri} />
+            ) : (
+              <Image 
+                source={{ uri: capturedPhoto.uri }} 
+                style={StyleSheet.absoluteFill} 
+                resizeMode="cover" 
+                onLoad={() => {
+                  if (isSaving && autoSave) {
+                    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+                    setTimeout(processAutoSave, 100);
                   }
-                }, 150);
-              }
-            }}
-          />
+                }}
+                onError={(e) => {
+                  console.log('Image load error:', e.nativeEvent?.error);
+                  if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+                  setIsSaving(false);
+                  if (!capturedPhoto?.uri) {
+                    setIsPreview(false);
+                    showAlert('Error', 'Failed to display captured photo.');
+                  }
+                }}
+              />
+            )}
+            {isSaving && (
+              <View style={styles.savingOverlay} pointerEvents="none">
+                <ActivityIndicator size="large" color="#FFFFFF" />
+                <Text style={styles.savingOverlayText}>
+                  {capturedPhoto.isVideo ? 'Saving GPS Video…' : 'Saving GPS Photo…'}
+                </Text>
+              </View>
+            )}
+          </>
         ) : (
           <>
             <CameraView
@@ -551,6 +818,8 @@ export default function CameraScreen({ route, navigation }) {
               facing={facing}
               flash={flash}
               zoom={zoom}
+              mode={mode === 'video' ? 'video' : 'picture'}
+              mute={muteAudio}
             />
             {/* Rule-of-thirds grid */}
             <View style={styles.grid} pointerEvents="none">
@@ -712,38 +981,81 @@ export default function CameraScreen({ route, navigation }) {
 
 
 
-      {/* Bottom Controls — Gallery | Shutter | Switch (matching reference) */}
-      <View style={styles.bottomControlsWrap}>
+      {/* Bottom Controls — Gallery | Shutter / Record | Switch */}
+      <View style={[styles.bottomControlsWrap, { paddingBottom: Math.max(insets.bottom, 12) + (isSmallScreen ? 70 : 80) }]}>
         {isPreview ? (
-          <View style={styles.previewActions}>
-            <TouchableOpacity style={[styles.previewCircleBtn, { backgroundColor: T.accent }]} onPress={handleShareAutoSaved} disabled={!stampedImageUri}>
-              <Ionicons name="share-social-outline" size={22} color="#FFF" />
-              <Text style={styles.previewCircleBtnLabel}>Share</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.previewCircleBtn, { backgroundColor: 'rgba(255,255,255,0.15)' }]} onPress={openLocModal}>
-              <Ionicons name="create-outline" size={22} color="#FFF" />
-              <Text style={styles.previewCircleBtnLabel}>Edit</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.previewCircleBtn, { backgroundColor: 'rgba(255,255,255,0.15)' }]} onPress={retake}>
-              <Ionicons name="close-outline" size={22} color="#FFF" />
-              <Text style={styles.previewCircleBtnLabel}>Close</Text>
-            </TouchableOpacity>
-          </View>
+          <Animated.View style={[
+            styles.previewActions,
+            {
+              transform: [{ translateY: previewSlideAnim }],
+              paddingBottom: Math.max(insets.bottom, 8),
+            }
+          ]}>
+            {!isSaved ? (
+              <>
+                {/* Step 1: Save | Edit | Close */}
+                <TouchableOpacity style={[styles.previewCircleBtn, { backgroundColor: T?.accentGreen || '#22C55E' }]} onPress={handleSaveEdited} disabled={isSaving}>
+                  <Ionicons name="save-outline" size={isSmallScreen ? 20 : 22} color="#FFF" />
+                  <Text style={styles.previewCircleBtnLabel}>Save</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.previewCircleBtn, { backgroundColor: 'rgba(255,255,255,0.15)' }]} onPress={openLocModal}>
+                  <Ionicons name="create-outline" size={isSmallScreen ? 20 : 22} color="#FFF" />
+                  <Text style={styles.previewCircleBtnLabel}>Edit</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.previewCircleBtn, { backgroundColor: 'rgba(255,255,255,0.15)' }]} onPress={retake}>
+                  <Ionicons name="close-outline" size={isSmallScreen ? 20 : 22} color="#FFF" />
+                  <Text style={styles.previewCircleBtnLabel}>Close</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                {/* Step 2 (Once Saved): Share | Cancel */}
+                <TouchableOpacity style={[styles.previewCircleBtn, { backgroundColor: T?.accent || '#1877F2' }]} onPress={handleShareAutoSaved}>
+                  <Ionicons name="share-social-outline" size={isSmallScreen ? 20 : 22} color="#FFF" />
+                  <Text style={styles.previewCircleBtnLabel}>Share</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.previewCircleBtn, { backgroundColor: 'rgba(255,255,255,0.15)' }]} onPress={retake}>
+                  <Ionicons name="close-outline" size={isSmallScreen ? 20 : 22} color="#FFF" />
+                  <Text style={styles.previewCircleBtnLabel}>Cancel</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </Animated.View>
         ) : (
           <View style={styles.shootRow}>
             {/* Flash toggle */}
             <TouchableOpacity style={styles.galleryThumb} onPress={toggleFlash}>
               <Ionicons name={flashIcon} size={24} color={flashColor} />
             </TouchableOpacity>
-            {/* Shutter */}
+            {/* Shutter / Record button */}
             <Animated.View style={{ transform: [{ scale: shutterScaleAnim }] }}>
-              <TouchableOpacity style={[styles.shutterBtn, { borderColor: T.accent }]} onPress={animatedTakePicture} disabled={isSaving}>
-                <View style={[styles.shutterInner, { backgroundColor: '#FFF' }]} />
-              </TouchableOpacity>
+              {mode === 'photo' ? (
+                <TouchableOpacity style={[styles.shutterBtn, { borderColor: T?.accent || '#1877F2' }]} onPress={animatedTakePicture} disabled={isSaving}>
+                  <View style={[styles.shutterInner, { backgroundColor: '#FFF' }]} />
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity 
+                  style={[styles.shutterBtn, { borderColor: '#EF4444', backgroundColor: 'rgba(239,68,68,0.2)' }]} 
+                  onPress={toggleRecording}
+                >
+                  <Animated.View style={[styles.shutterInner, { backgroundColor: '#EF4444', borderRadius: 30, opacity: isRecording ? recBlinkAnim : 1 }]} />
+                </TouchableOpacity>
+              )}
             </Animated.View>
             {/* Switch camera */}
-            <TouchableOpacity style={styles.switchCamBtn} onPress={toggleFacing}>
-              <Ionicons name="camera-reverse-outline" size={24} color="#FFF" />
+            <TouchableOpacity style={styles.switchCamBtn} onPress={toggleFacing} activeOpacity={0.75}>
+              <Animated.View
+                style={{
+                  transform: [{
+                    rotate: camRotateAnim.interpolate({
+                      inputRange: [0, 360],
+                      outputRange: ['0deg', '360deg'],
+                    })
+                  }]
+                }}
+              >
+                <Ionicons name="camera-reverse" size={26} color="#FFFFFF" />
+              </Animated.View>
             </TouchableOpacity>
           </View>
         )}
@@ -1112,18 +1424,49 @@ const styles = StyleSheet.create({
   gpsPanelAddr: { color: 'rgba(255,255,255,0.85)', fontSize: 11, marginTop: 4, fontWeight: '500' },
 
   // Bottom controls
-  bottomControlsWrap: { backgroundColor: 'transparent', position: 'absolute', bottom: 0, left: 0, right: 0, paddingBottom: 100, paddingTop: 30, zIndex: 10 },
+  bottomControlsWrap: { backgroundColor: 'transparent', position: 'absolute', bottom: 0, left: 0, right: 0, paddingTop: 30, zIndex: 10 },
   shootRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', paddingHorizontal: 40 },
   galleryThumb: { width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.4)' },
   galleryThumbImg: { width: '100%', height: '100%', borderRadius: 24 },
   shutterBtn: { width: 76, height: 76, borderRadius: 38, borderWidth: 3, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.1)', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 12 },
   shutterInner: { width: 60, height: 60, borderRadius: 30 },
-  switchCamBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' },
+  switchCamBtn: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.4)',
+  },
 
   // Preview action buttons (circular like the design)
-  previewActions: { flexDirection: 'row', justifyContent: 'center', gap: 28, paddingVertical: 12 },
-  previewCircleBtn: { width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center' },
-  previewCircleBtnLabel: { color: '#FFF', fontSize: 10, fontWeight: '600', marginTop: 4, position: 'absolute', bottom: -18 },
+  previewActions: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: isSmallScreen ? 18 : 28,
+    paddingVertical: isSmallScreen ? 8 : 12,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    borderRadius: 28,
+    marginHorizontal: 16,
+    paddingHorizontal: 12,
+  },
+  previewCircleBtn: {
+    width: isSmallScreen ? 48 : 56,
+    height: isSmallScreen ? 48 : 56,
+    borderRadius: isSmallScreen ? 24 : 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  previewCircleBtnLabel: {
+    color: '#FFF',
+    fontSize: isSmallScreen ? 9 : 10,
+    fontWeight: '600',
+    marginTop: 4,
+    position: 'absolute',
+    bottom: isSmallScreen ? -15 : -18,
+  },
 
   // Save toast
   saveToast: { position: 'absolute', top: 0, left: 0, right: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 12, paddingHorizontal: 20, zIndex: 100 },
@@ -1319,5 +1662,59 @@ const styles = StyleSheet.create({
   shareCancelText: {
     fontSize: 14,
     fontWeight: '700',
+  },
+  savingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 50,
+    gap: 12,
+  },
+  savingOverlayText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  // Video Recording Banner (Top Positioned)
+  recBannerOverlay: {
+    position: 'absolute',
+    top: 65,
+    alignSelf: 'center',
+    zIndex: 30,
+  },
+  recBannerCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.25)',
+  },
+  recIndicatorDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#EF4444',
+  },
+  recTimerText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
+    fontFamily: Platform.OS === 'ios' ? 'Courier New' : 'monospace',
+    letterSpacing: 0.8,
+  },
+  recPauseCircle: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 6,
   },
 });

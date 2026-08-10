@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState } from 'react';
 import { Modal, View, Text, TouchableOpacity, StyleSheet, Animated } from 'react-native';
 import { BlurView } from 'expo-blur';
+import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from './ThemeContext';
 
 const AlertContext = createContext();
@@ -12,7 +13,7 @@ export function AlertProvider({ children }) {
   
   const [toastMessage, setToastMessage] = useState(null);
   const fadeAnim = React.useRef(new Animated.Value(0)).current;
-  const slideAnim = React.useRef(new Animated.Value(-50)).current;
+  const slideAnim = React.useRef(new Animated.Value(-20)).current;
   const toastTimer = React.useRef(null);
   
   const showAlert = (title, message, buttons = []) => {
@@ -29,36 +30,42 @@ export function AlertProvider({ children }) {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     setToastMessage(message);
     fadeAnim.setValue(0);
-    slideAnim.setValue(-50);
+    slideAnim.setValue(-20);
     
     Animated.parallel([
-      Animated.timing(fadeAnim, { toValue: 1, duration: 300, useNativeDriver: true }),
-      Animated.spring(slideAnim, { toValue: 60, friction: 8, useNativeDriver: true })
+      Animated.timing(fadeAnim, { toValue: 1, duration: 250, useNativeDriver: true }),
+      Animated.spring(slideAnim, { toValue: 54, friction: 8, tension: 70, useNativeDriver: true })
     ]).start();
     
     toastTimer.current = setTimeout(() => {
       Animated.parallel([
-        Animated.timing(fadeAnim, { toValue: 0, duration: 300, useNativeDriver: true }),
-        Animated.timing(slideAnim, { toValue: -50, duration: 300, useNativeDriver: true })
+        Animated.timing(fadeAnim, { toValue: 0, duration: 250, useNativeDriver: true }),
+        Animated.timing(slideAnim, { toValue: -20, duration: 250, useNativeDriver: true })
       ]).start(() => setToastMessage(null));
-    }, 3000);
+    }, 2400);
   };
 
   return (
     <AlertContext.Provider value={{ showAlert, showToast }}>
       {children}
       
-      {/* Toast Notification */}
+      {/* Compact Liquid Glass Toast Notification */}
       {toastMessage && (
         <Animated.View style={[
           styles.toastContainer, 
           { 
-            backgroundColor: T.mode === 'dark' ? '#333' : '#333', 
+            backgroundColor: T.mode === 'dark' ? 'rgba(15, 23, 42, 0.78)' : 'rgba(255, 255, 255, 0.85)', 
+            borderColor: T.mode === 'dark' ? 'rgba(255, 255, 255, 0.18)' : 'rgba(0, 0, 0, 0.12)',
             opacity: fadeAnim,
             transform: [{ translateY: slideAnim }]
           }
         ]}>
-          <Text style={styles.toastText}>{toastMessage}</Text>
+          <BlurView intensity={80} tint={T.mode === 'dark' ? 'dark' : 'light'} style={styles.toastBlur}>
+            <Ionicons name="checkmark-circle" size={16} color={T.accent || '#1877F2'} />
+            <Text style={[styles.toastText, { color: T.mode === 'dark' ? '#F0F2FF' : '#0F172A' }]}>
+              {toastMessage}
+            </Text>
+          </BlurView>
         </Animated.View>
       )}
 
@@ -145,25 +152,32 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
   },
+
+  // Compact Frosted Glass Toast Pill
   toastContainer: {
     position: 'absolute',
     top: 0,
-    left: 20,
-    right: 20,
-    padding: 16,
-    borderRadius: 12,
+    alignSelf: 'center',
+    borderRadius: 20,
     zIndex: 9999,
-    elevation: 9999,
+    elevation: 12,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
+    shadowOpacity: 0.22,
+    shadowRadius: 10,
+    borderWidth: 1,
+    overflow: 'hidden',
+  },
+  toastBlur: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: 7,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
   },
   toastText: {
-    color: '#FFF',
-    fontSize: 15,
-    fontWeight: '600',
+    fontSize: 12.5,
+    fontWeight: '700',
+    letterSpacing: 0.3,
   }
 });

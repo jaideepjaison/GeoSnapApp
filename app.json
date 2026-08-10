@@ -35,6 +35,11 @@
         "android.permission.ACCESS_MEDIA_LOCATION"
       ]
     },
+    "androidNavigationBar": {
+      "visible": "defaultValue",
+      "backgroundColor": "#000000",
+      "barStyle": "light-content"
+    },
     "plugins": [
       [
         "expo-camera",
@@ -55,7 +60,8 @@
           "savePhotosPermission": "GeoSnap saves GPS-tagged photos to your GeoSnap album.",
           "isAccessMediaLocationEnabled": true
         }
-      ]
+      ],
+      "expo-video"
     ],
     "extra": {
       "eas": {
