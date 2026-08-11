@@ -517,13 +517,17 @@ export default function GalleryScreen({ navigation }) {
         showAlert('GPS Link Copied!', 'Location coordinates & clickable Google Maps link copied!', [
           { text: 'OK & Share Photo', onPress: async () => {
               try {
-                await Share.open({ url: photo.uri, message: caption, failOnCancel: false });
+                if (await Sharing.isAvailableAsync()) {
+                  await Sharing.shareAsync(photo.uri, { dialogTitle: 'GeoSnap GPS Share' });
+                }
               } catch (e) { console.log(e); }
           }}
         ]);
       } else {
         try {
-          await Share.open({ url: photo.uri, failOnCancel: false });
+          if (await Sharing.isAvailableAsync()) {
+            await Sharing.shareAsync(photo.uri, { dialogTitle: 'Share GeoSnap Photo' });
+          }
         } catch (e) { console.log(e); }
       }
     } catch (err) { showAlert('Error', err.message); }
@@ -684,22 +688,13 @@ export default function GalleryScreen({ navigation }) {
         </SafeAreaView>
       )}
 
-      {/* Photo Detail Modal — Flex column layout without overlapping overlays */}
+      {/* Photo Detail Modal — Ultra-Modern Cinema Viewer */}
       <Modal visible={!!selected} transparent={false} animationType="fade" onRequestClose={() => setSelected(null)}>
         <View style={{ flex: 1, backgroundColor: '#000' }}>
           {selected && (
-            <SafeAreaView style={{ flex: 1 }}>
-              
-              {/* Top Header */}
-              <View style={{ flexDirection: 'row', alignItems: 'center', padding: 16 }}>
-                <TouchableOpacity onPress={() => setSelected(null)} style={{ padding: 8, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 20, marginRight: 12 }}>
-                  <Ionicons name="arrow-back" size={22} color="#FFF" />
-                </TouchableOpacity>
-                <Text style={{ fontSize: 17, fontWeight: '700', color: '#FFF' }}>Photo</Text>
-              </View>
-
-              {/* Full screen Image or Video Viewer */}
-              <View style={{ flex: 1, overflow: 'hidden' }}>
+            <>
+              {/* Full screen Image or Video Viewer (Edge-to-Edge) */}
+              <View style={StyleSheet.absoluteFill}>
                 {(selected.mediaType === 'video' || selected.uri?.endsWith('.mp4') || selected.filename?.endsWith('.mp4')) ? (
                   <VideoPlayerView
                     videoUri={selected.uri}
@@ -721,21 +716,41 @@ export default function GalleryScreen({ navigation }) {
                   >
                     <Image 
                       source={{ uri: selected.uri }} 
-                      style={{ flex: 1, width: '100%', minHeight: 400 }} 
+                      style={{ flex: 1, width: '100%', height: '100%' }} 
                       resizeMode="contain" 
                     />
                   </ScrollView>
                 )}
               </View>
 
-              {/* Bottom Actions Navigation Bar */}
-              <View style={{ backgroundColor: '#0B1220', paddingVertical: 16, paddingBottom: Math.max(insets.bottom, 16), borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.1)' }}>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, gap: 16 }}>
-                  <ActionBtn icon="share-social-outline" label="Share" color="#FFF" onPress={() => sharePhoto(selected)} />
-                  <ActionBtn icon="information-circle-outline" label="Details" color="#FFF" onPress={() => setShowDetails(true)} />
-                  <ActionBtn icon="copy-outline" label="Copy GPS" color="#FFF" onPress={() => copyGPS(selected)} />
-                  <ActionBtn icon="trash-outline" label="Delete" color="#FF6B6B" onPress={() => { setSelected(null); deletePhoto(selected); }} />
-                </ScrollView>
+              {/* Floating Top Header (Close Button) */}
+              <View style={{ position: 'absolute', top: Math.max(insets.top, 16), left: 16, zIndex: 10 }}>
+                <TouchableOpacity 
+                  onPress={() => setSelected(null)} 
+                  style={{ width: 44, height: 44, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 22, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)' }}
+                >
+                  <Ionicons name="close" size={24} color="#FFF" />
+                </TouchableOpacity>
+              </View>
+
+              {/* Floating Bottom Action Tray (Glass Pill) */}
+              <View style={{ position: 'absolute', bottom: Math.max(insets.bottom, 24), left: 0, right: 0, alignItems: 'center', zIndex: 10 }}>
+                <View style={{ flexDirection: 'row', backgroundColor: 'rgba(20,25,35,0.85)', borderRadius: 32, paddingHorizontal: 16, paddingVertical: 12, gap: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)', shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.6, shadowRadius: 24, backdropFilter: 'blur(10px)' }}>
+                  <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 16, paddingVertical: 8, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 20 }} onPress={() => sharePhoto(selected)}>
+                    <Ionicons name="share-social-outline" size={18} color="#FFF" />
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#FFF' }}>Share</Text>
+                  </TouchableOpacity>
+                  
+                  <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 16, paddingVertical: 8, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 20 }} onPress={() => setShowDetails(true)}>
+                    <Ionicons name="information-circle-outline" size={18} color="#FFF" />
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#FFF' }}>Details</Text>
+                  </TouchableOpacity>
+                  
+                  <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 16, paddingVertical: 8, backgroundColor: 'rgba(255,75,75,0.15)', borderRadius: 20 }} onPress={() => { setSelected(null); deletePhoto(selected); }}>
+                    <Ionicons name="trash-outline" size={18} color="#FF4B4B" />
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#FF4B4B' }}>Delete</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
 
               {/* Image Data Details Modal */}
@@ -928,7 +943,7 @@ export default function GalleryScreen({ navigation }) {
                   </View>
                 </KeyboardAvoidingView>
               </Modal>
-            </SafeAreaView>
+            </>
           )}
         </View>
       </Modal>

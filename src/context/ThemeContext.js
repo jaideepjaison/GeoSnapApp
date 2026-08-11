@@ -129,7 +129,7 @@ export function ThemeProvider({ children }) {
   const [showLocation, setShowLocation] = useState(true);
   const [showFlag, setShowFlag] = useState(true);
   const [showLatLong, setShowLatLong] = useState(true);
-  const [showDate, setShowDate] = useState(false);
+  const [showDate, setShowDate] = useState(true);
   const [muteAudio, setMuteAudio] = useState(false);
   const [ready, setReady] = useState(false);
 
@@ -162,7 +162,7 @@ export function ThemeProvider({ children }) {
         if (savedLoc === 'false') setShowLocation(false);
         if (savedFlag === 'false') setShowFlag(false);
         if (savedLatLong === 'false') setShowLatLong(false);
-        if (savedDate === 'true') setShowDate(true);
+        if (savedDate === 'false') setShowDate(false);
         if (savedMuteAudio === 'true') setMuteAudio(true);
         setAutoSave(true);
       } catch {}

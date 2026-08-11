@@ -1,0 +1,13 @@
+# Native folders (let EAS run Expo Prebuild cleanly)
+android/
+ios/
+
+# Node modules
+node_modules/
+
+# Expo Caches & Artifacts
+.expo/
+.git/
+*.apk
+*.aab
+*.log

@@ -24,6 +24,7 @@
     "expo-sharing": "~14.0.8",
     "expo-status-bar": "~3.0.9",
     "expo-video": "~3.0.16",
+    "ffmpeg-kit-react-native": "^4.5.1",
     "piexifjs": "^1.0.6",
     "react": "19.1.0",
     "react-native": "0.81.5",

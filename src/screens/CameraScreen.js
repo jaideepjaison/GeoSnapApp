@@ -15,6 +15,8 @@ import * as Sharing from 'expo-sharing';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { captureRef } from 'react-native-view-shot';
+import ViewShot from 'react-native-view-shot';
+import { FFmpegKit, ReturnCode } from 'ffmpeg-kit-react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import GpsOverlay from '../components/GpsOverlay';
 import FlashEffect from '../components/FlashEffect';
@@ -129,6 +131,7 @@ export default function CameraScreen({ route, navigation }) {
 
   const cameraRef = useRef(null);
   const viewShotRef = useRef(null);
+  const gpsOverlayRef = useRef(null);
   const locationWatchRef = useRef(null);
   const autoSaveTimerRef = useRef(null);
   const isAutoSavingRef = useRef(false);
@@ -261,9 +264,9 @@ export default function CameraScreen({ route, navigation }) {
             });
             if (geo.length > 0) {
               const g = geo[0];
-              const parts = [g.street, g.district, g.city, g.region, g.country].filter(Boolean);
+              const addressParts = [g.city || g.district, g.region, g.country].filter(Boolean);
               const flag = getFlagEmoji(g.isoCountryCode);
-              setAddress(parts.slice(0, 3).join(', ') + (flag ? ` ${flag}` : ''));
+              setAddress(addressParts.join(', ') + (flag ? ` ${flag}` : ''));
             }
           } catch { setAddress(null); }
         }
@@ -482,15 +485,47 @@ export default function CameraScreen({ route, navigation }) {
     }
     setIsSaving(true);
     try {
-      const uri = await captureRef(viewShotRef, { format: 'jpg', quality: 0.92 });
-      const asset = await MediaLibrary.createAssetAsync(uri);
-      let album = await MediaLibrary.getAlbumAsync('GeoSnap');
-      if (!album) {
-        await MediaLibrary.createAlbumAsync('GeoSnap', asset, true);
+      if (capturedPhoto.isVideo) {
+        showToast('Processing video overlay...');
+        const overlayUri = await gpsOverlayRef.current.capture();
+        
+        const fileDir = capturedPhoto.uri.substring(0, capturedPhoto.uri.lastIndexOf('/')) + '/';
+        const outputUri = `${fileDir}geosnap_out_${Date.now()}.mp4`;
+        
+        const cleanVideoUri = capturedPhoto.uri.replace('file://', '');
+        const cleanOverlayUri = overlayUri.replace('file://', '');
+        const cleanOutputUri = outputUri.replace('file://', '');
+        
+        const command = `-i "${cleanVideoUri}" -i "${cleanOverlayUri}" -filter_complex "[1:v][0:v]scale2ref=w=iw:h=-2[ovrl][vid];[vid][ovrl]overlay=x=0:y=main_h-overlay_h-6" -c:v mpeg4 -q:v 2 -c:a copy "${cleanOutputUri}"`;
+        
+        const session = await FFmpegKit.execute(command);
+        const returnCode = await session.getReturnCode();
+        
+        if (ReturnCode.isSuccess(returnCode)) {
+          const asset = await MediaLibrary.createAssetAsync(outputUri);
+          let album = await MediaLibrary.getAlbumAsync('GeoSnap');
+          if (!album) {
+            await MediaLibrary.createAlbumAsync('GeoSnap', asset, true);
+          } else {
+            await MediaLibrary.addAssetsToAlbumAsync([asset], album, true);
+          }
+          return outputUri;
+        } else {
+          const output = await session.getOutput();
+          showAlert('Error', `Overlay failed.\nOutput: ${output ? output.slice(-400) : 'No logs'}`);
+          return null;
+        }
       } else {
-        await MediaLibrary.addAssetsToAlbumAsync([asset], album, true);
+        const uri = await captureRef(viewShotRef, { format: 'jpg', quality: 0.92 });
+        const asset = await MediaLibrary.createAssetAsync(uri);
+        let album = await MediaLibrary.getAlbumAsync('GeoSnap');
+        if (!album) {
+          await MediaLibrary.createAlbumAsync('GeoSnap', asset, true);
+        } else {
+          await MediaLibrary.addAssetsToAlbumAsync([asset], album, true);
+        }
+        return uri;
       }
-      return uri;
     } catch (err) {
       showAlert('Error', 'Failed to save: ' + err.message);
       return null;
@@ -499,22 +534,47 @@ export default function CameraScreen({ route, navigation }) {
     }
   };
 
-  // Save edited photo with updated location stamp
+  // Save edited photo/video with updated location stamp
   const handleSaveEdited = async () => {
     if (isSaving || !capturedPhoto) return;
     setIsSaving(true);
     try {
       if (capturedPhoto.isVideo) {
-        const asset = await MediaLibrary.createAssetAsync(capturedPhoto.uri);
-        let album = await MediaLibrary.getAlbumAsync('GeoSnap');
-        if (!album) {
-          await MediaLibrary.createAlbumAsync('GeoSnap', asset, true);
+        showToast('Processing video overlay... this may take a moment.');
+        // Capture GPS overlay as a transparent PNG
+        const overlayUri = await gpsOverlayRef.current.capture();
+        
+        // Output file
+        // FFmpeg command to overlay the image at the bottom
+        // [0:v] is video, [1:v] is image
+        // We use overlay=x=0:y=main_h-overlay_h to put it at the bottom.
+        const fileDir = capturedPhoto.uri.substring(0, capturedPhoto.uri.lastIndexOf('/')) + '/';
+        const outputUri = `${fileDir}geosnap_out_${Date.now()}.mp4`;
+        
+        const cleanVideoUri = capturedPhoto.uri.replace('file://', '');
+        const cleanOverlayUri = overlayUri.replace('file://', '');
+        const cleanOutputUri = outputUri.replace('file://', '');
+        
+        const command = `-i "${cleanVideoUri}" -i "${cleanOverlayUri}" -filter_complex "[1:v][0:v]scale2ref=w=iw:h=-2[ovrl][vid];[vid][ovrl]overlay=x=0:y=main_h-overlay_h" -c:v mpeg4 -q:v 2 -c:a copy "${cleanOutputUri}"`;
+        
+        const session = await FFmpegKit.execute(command);
+        const returnCode = await session.getReturnCode();
+        
+        if (ReturnCode.isSuccess(returnCode)) {
+          const asset = await MediaLibrary.createAssetAsync(outputUri);
+          let album = await MediaLibrary.getAlbumAsync('GeoSnap');
+          if (!album) {
+            await MediaLibrary.createAlbumAsync('GeoSnap', asset, true);
+          } else {
+            await MediaLibrary.addAssetsToAlbumAsync([asset], album, true);
+          }
+          setStampedImageUri(outputUri);
+          setIsSaved(true);
+          showToast('Saved video to GeoSnap gallery!');
         } else {
-          await MediaLibrary.addAssetsToAlbumAsync([asset], album, true);
+          const output = await session.getOutput();
+          showAlert('Error', `Overlay failed.\nOutput: ${output ? output.slice(-400) : 'No logs'}`);
         }
-        setStampedImageUri(capturedPhoto.uri);
-        setIsSaved(true);
-        showToast('Saved video to GeoSnap gallery!');
       } else {
         const uri = await captureRef(viewShotRef, { format: 'jpg', quality: 0.92 });
         const asset = await MediaLibrary.createAssetAsync(uri);
@@ -857,13 +917,15 @@ export default function CameraScreen({ route, navigation }) {
           />
         )}
 
-        {/* GPS Overlay — always on top (burned into saved image) */}
-        <GpsOverlay
-          location={manualLocation || location}
-          address={manualAddress ?? address}
-          forCapture={isPreview}
-          captureTime={captureTime}
-        />
+        {/* GPS Overlay — always on top (burned into saved image & video) */}
+        <ViewShot ref={gpsOverlayRef} options={{ format: 'png', quality: 1, result: 'tmpfile' }} style={StyleSheet.absoluteFill} pointerEvents="none">
+          <GpsOverlay
+            location={manualLocation || location}
+            address={manualAddress ?? address}
+            forCapture={isPreview}
+            captureTime={captureTime}
+          />
+        </ViewShot>
 
         {/* Zoom badge */}
         {!isPreview && (
