@@ -173,7 +173,7 @@ export default function GpsOverlay({ location, address, forCapture = false, capt
             {/* City / Address */}
             {showLocation && (
               address ? (
-                <Text style={[styles.cityText, { fontSize: cityFs }]} numberOfLines={1}>{address}</Text>
+                <Text style={[styles.cityText, { fontSize: cityFs }]} numberOfLines={3}>{address}</Text>
               ) : (
                 <Text style={[styles.cityText, { fontSize: cityFs }]}>Locating...</Text>
               )

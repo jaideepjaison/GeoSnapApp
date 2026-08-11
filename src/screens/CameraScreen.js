@@ -264,7 +264,7 @@ export default function CameraScreen({ route, navigation }) {
             });
             if (geo.length > 0) {
               const g = geo[0];
-              const addressParts = [g.city || g.district, g.region, g.country].filter(Boolean);
+              const addressParts = Array.from(new Set([g.street, g.city, g.region, g.country].filter(Boolean)));
               const flag = getFlagEmoji(g.isoCountryCode);
               setAddress(addressParts.join(', ') + (flag ? ` ${flag}` : ''));
             }
@@ -419,7 +419,7 @@ export default function CameraScreen({ route, navigation }) {
       try {
         Vibration.vibrate(120);
         cameraRef.current.stopRecording();
-      } catch {}
+      } catch { }
       setIsRecording(false);
       setIsPaused(false);
       if (recordTimerRef.current) clearInterval(recordTimerRef.current);
@@ -488,19 +488,19 @@ export default function CameraScreen({ route, navigation }) {
       if (capturedPhoto.isVideo) {
         showToast('Processing video overlay...');
         const overlayUri = await gpsOverlayRef.current.capture();
-        
+
         const fileDir = capturedPhoto.uri.substring(0, capturedPhoto.uri.lastIndexOf('/')) + '/';
         const outputUri = `${fileDir}geosnap_out_${Date.now()}.mp4`;
-        
+
         const cleanVideoUri = capturedPhoto.uri.replace('file://', '');
         const cleanOverlayUri = overlayUri.replace('file://', '');
         const cleanOutputUri = outputUri.replace('file://', '');
-        
+
         const command = `-i "${cleanVideoUri}" -i "${cleanOverlayUri}" -filter_complex "[1:v][0:v]scale2ref=w=iw:h=-2[ovrl][vid];[vid][ovrl]overlay=x=0:y=main_h-overlay_h-6" -c:v mpeg4 -q:v 2 -c:a copy "${cleanOutputUri}"`;
-        
+
         const session = await FFmpegKit.execute(command);
         const returnCode = await session.getReturnCode();
-        
+
         if (ReturnCode.isSuccess(returnCode)) {
           const asset = await MediaLibrary.createAssetAsync(outputUri);
           let album = await MediaLibrary.getAlbumAsync('GeoSnap');
@@ -543,23 +543,23 @@ export default function CameraScreen({ route, navigation }) {
         showToast('Processing video overlay... this may take a moment.');
         // Capture GPS overlay as a transparent PNG
         const overlayUri = await gpsOverlayRef.current.capture();
-        
+
         // Output file
         // FFmpeg command to overlay the image at the bottom
         // [0:v] is video, [1:v] is image
         // We use overlay=x=0:y=main_h-overlay_h to put it at the bottom.
         const fileDir = capturedPhoto.uri.substring(0, capturedPhoto.uri.lastIndexOf('/')) + '/';
         const outputUri = `${fileDir}geosnap_out_${Date.now()}.mp4`;
-        
+
         const cleanVideoUri = capturedPhoto.uri.replace('file://', '');
         const cleanOverlayUri = overlayUri.replace('file://', '');
         const cleanOutputUri = outputUri.replace('file://', '');
-        
+
         const command = `-i "${cleanVideoUri}" -i "${cleanOverlayUri}" -filter_complex "[1:v][0:v]scale2ref=w=iw:h=-2[ovrl][vid];[vid][ovrl]overlay=x=0:y=main_h-overlay_h" -c:v mpeg4 -q:v 2 -c:a copy "${cleanOutputUri}"`;
-        
+
         const session = await FFmpegKit.execute(command);
         const returnCode = await session.getReturnCode();
-        
+
         if (ReturnCode.isSuccess(returnCode)) {
           const asset = await MediaLibrary.createAssetAsync(outputUri);
           let album = await MediaLibrary.getAlbumAsync('GeoSnap');
@@ -784,15 +784,15 @@ export default function CameraScreen({ route, navigation }) {
               <Text style={styles.recTimerText}>
                 {isPaused ? 'PAUSED' : 'REC'}  {formatRecordTime(recordSeconds)}
               </Text>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={styles.recPauseCircle}
                 onPress={() => {
                   if (isPaused) {
-                    try { cameraRef.current?.resumeRecording(); } catch {}
+                    try { cameraRef.current?.resumeRecording(); } catch { }
                     setIsPaused(false);
                     Vibration.vibrate(50);
                   } else {
-                    try { cameraRef.current?.pauseRecording(); } catch {}
+                    try { cameraRef.current?.pauseRecording(); } catch { }
                     setIsPaused(true);
                     Vibration.vibrate(50);
                   }
@@ -804,15 +804,15 @@ export default function CameraScreen({ route, navigation }) {
           )}
 
           {/* Top-Right: Camera / Video Mode Switcher */}
-          <TouchableOpacity 
-            style={styles.glassCircleBtn} 
+          <TouchableOpacity
+            style={styles.glassCircleBtn}
             onPress={async () => {
               if (mode === 'photo') {
                 if (!micPermission?.granted) await requestMicPermission();
                 setMode('video');
               } else {
                 if (isRecording) {
-                  try { cameraRef.current?.stopRecording(); } catch {}
+                  try { cameraRef.current?.stopRecording(); } catch { }
                   setIsRecording(false);
                   setIsPaused(false);
                   if (recordTimerRef.current) clearInterval(recordTimerRef.current);
@@ -840,10 +840,10 @@ export default function CameraScreen({ route, navigation }) {
             {capturedPhoto.isVideo ? (
               <VideoPreviewPlayer videoUri={capturedPhoto.uri} />
             ) : (
-              <Image 
-                source={{ uri: capturedPhoto.uri }} 
-                style={StyleSheet.absoluteFill} 
-                resizeMode="cover" 
+              <Image
+                source={{ uri: capturedPhoto.uri }}
+                style={StyleSheet.absoluteFill}
+                resizeMode="cover"
                 onLoad={() => {
                   if (isSaving && autoSave) {
                     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
@@ -891,7 +891,7 @@ export default function CameraScreen({ route, navigation }) {
               ))}
             </View>
             {/* Corner brackets */}
-            {['TL','TR','BL','BR'].map(pos => (
+            {['TL', 'TR', 'BL', 'BR'].map(pos => (
               <View key={pos} style={[styles.bracket, styles[`bracket${pos}`], { borderColor: T.accent }]} />
             ))}
           </>
@@ -899,21 +899,21 @@ export default function CameraScreen({ route, navigation }) {
 
         {/* Simulated Camera Exposure/Brightness Overlays */}
         {exposure < 0 && (
-          <View 
-            pointerEvents="none" 
+          <View
+            pointerEvents="none"
             style={[
-              StyleSheet.absoluteFill, 
+              StyleSheet.absoluteFill,
               { backgroundColor: '#000', opacity: Math.abs(exposure) * 0.65 }
-            ]} 
+            ]}
           />
         )}
         {exposure > 0 && (
-          <View 
-            pointerEvents="none" 
+          <View
+            pointerEvents="none"
             style={[
-              StyleSheet.absoluteFill, 
+              StyleSheet.absoluteFill,
               { backgroundColor: '#FFF', opacity: exposure * 0.45 }
-            ]} 
+            ]}
           />
         )}
 
@@ -983,7 +983,7 @@ export default function CameraScreen({ route, navigation }) {
                 },
               ]}
             />
-            
+
             {/* Exposure Vertical Slider (Sun icon) */}
             {showExposureSlider && (
               <View
@@ -1039,7 +1039,7 @@ export default function CameraScreen({ route, navigation }) {
       </View>
 
 
-      
+
 
 
 
@@ -1096,8 +1096,8 @@ export default function CameraScreen({ route, navigation }) {
                   <View style={[styles.shutterInner, { backgroundColor: '#FFF' }]} />
                 </TouchableOpacity>
               ) : (
-                <TouchableOpacity 
-                  style={[styles.shutterBtn, { borderColor: '#EF4444', backgroundColor: 'rgba(239,68,68,0.2)' }]} 
+                <TouchableOpacity
+                  style={[styles.shutterBtn, { borderColor: '#EF4444', backgroundColor: 'rgba(239,68,68,0.2)' }]}
                   onPress={toggleRecording}
                 >
                   <Animated.View style={[styles.shutterInner, { backgroundColor: '#EF4444', borderRadius: 30, opacity: isRecording ? recBlinkAnim : 1 }]} />
@@ -1390,7 +1390,7 @@ export default function CameraScreen({ route, navigation }) {
                   Clipboard.setString(getShareMessage());
                   setShareCopied(true);
                   setTimeout(() => setShareCopied(false), 2500);
-                  
+
                   // Share the file natively
                   if (sharePhotoUri) {
                     try {
@@ -1398,7 +1398,7 @@ export default function CameraScreen({ route, navigation }) {
                         mimeType: 'image/jpeg',
                         dialogTitle: 'GeoSnap GPS Share',
                       });
-                    } catch {}
+                    } catch { }
                   }
                 }}
               >
@@ -1418,7 +1418,7 @@ export default function CameraScreen({ route, navigation }) {
                         mimeType: 'image/jpeg',
                         dialogTitle: 'Share Photo',
                       });
-                    } catch {}
+                    } catch { }
                   }
                 }}
               >
@@ -1446,12 +1446,12 @@ export default function CameraScreen({ route, navigation }) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 12 },
-  
+
   // Header — clean bar
   absoluteHeader: { zIndex: 10, backgroundColor: 'transparent' },
   headerBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12 },
   glassCircleBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.2, shadowRadius: 4 },
-  
+
   camera: { flex: 1 },
   grid: { ...StyleSheet.absoluteFillObject },
   gridLine: { position: 'absolute', backgroundColor: 'rgba(255,255,255,0.13)' },
