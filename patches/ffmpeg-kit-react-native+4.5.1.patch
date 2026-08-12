@@ -20,24 +20,28 @@ diff --git a/node_modules/ffmpeg-kit-react-native/android/.gradle/vcs-1/gc.prope
 new file mode 100644
 index 0000000..e69de29
 diff --git a/node_modules/ffmpeg-kit-react-native/android/build.gradle b/node_modules/ffmpeg-kit-react-native/android/build.gradle
-index e509ee4..d1ab470 100644
+index e509ee4..f0921c7 100644
 --- a/node_modules/ffmpeg-kit-react-native/android/build.gradle
 +++ b/node_modules/ffmpeg-kit-react-native/android/build.gradle
-@@ -26,11 +26,11 @@ def safeExtGet(String prop, String fallback) {
+@@ -25,12 +25,15 @@ def safeExtGet(String prop, String fallback) {
+   rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
  }
  
++def compileSdkVer = rootProject.ext.has('compileSdkVersion') ? rootProject.ext.get('compileSdkVersion') : 33
++def targetSdkVer = rootProject.ext.has('targetSdkVersion') ? rootProject.ext.get('targetSdkVersion') : 33
++
  android {
 -  compileSdkVersion 30
-+  compileSdkVersion safeExtGet('compileSdkVersion', 33)
++  compileSdkVersion compileSdkVer
  
    defaultConfig {
      minSdkVersion safeExtGet('ffmpegKitPackage', 'https').contains("-lts") ? 16 : 24
 -    targetSdkVersion 30
-+    targetSdkVersion safeExtGet('targetSdkVersion', 33)
++    targetSdkVersion targetSdkVer
      versionCode 451
      versionName "4.5.1"
    }
-@@ -50,6 +50,7 @@ android {
+@@ -50,6 +53,7 @@ android {
  }
  
  repositories {
